@@ -49,8 +49,11 @@ def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
     Preserva as coordenadas de ambas as fontes para uso nos métodos geo.
     """
     resolved = []
+    total = len(osm_locations)
 
-    for loc in osm_locations:
+    for i, loc in enumerate(osm_locations, start=1):
+        if i == 1 or i % 50 == 0 or i == total:
+            log.info(f"Resolvendo location IDs: {i}/{total} ({100*i//total}%)")
         try:
             search = instaloader.TopSearchResults(L.context, loc["name"])
 
