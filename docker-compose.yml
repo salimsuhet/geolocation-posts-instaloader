@@ -1,0 +1,50 @@
+services:
+
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: gv_instagram_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  collector:
+    build: .
+    container_name: gv_instagram_collector
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      INSTALOADER_USERNAME: ${INSTALOADER_USERNAME}
+      INSTALOADER_SESSION_DIR: /session
+      OSM_PBF_PATH: /data/${OSM_PBF_FILE}
+      OSM_PBF_FILE: ${OSM_PBF_FILE}
+      COLLECT_MODE: ${COLLECT_MODE}
+      HASHTAG_AUTO_GENERATE: ${HASHTAG_AUTO_GENERATE}
+      BBOX: ${BBOX}
+      STOP_DATE: ${STOP_DATE}
+    volumes:
+      - ${INSTALOADER_SESSION_PATH}:/session:ro
+      - ${OSM_PBF_DIR}:/data
+      - ./logs:/app/logs
+      - ./hashtags.txt:/app/hashtags.txt:ro
+
+volumes:
+  pgdata:

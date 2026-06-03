@@ -1,0 +1,24 @@
+# Credenciais — nunca versionar
+.env
+
+# Sessão do Instaloader (se copiada localmente)
+session-*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+
+# Dados OSM (arquivos grandes, não versionar)
+*.pbf
+*.osm
+
+# OS
+.DS_Store
+Thumbs.db

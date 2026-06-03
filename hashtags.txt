@@ -1,0 +1,49 @@
+# Hashtags fixas para coleta de posts da Grande Vitória ES
+# Uma hashtag por linha. Linhas começando com # são comentários.
+# Não inclua o símbolo # nas hashtags.
+
+# ─── Região ───────────────────────────────────────────────────
+grandevitoria
+grandevitoriaes
+vitoria
+vitoriaes
+vilavelha
+vilavelhaes
+cariacica
+cariacicaes
+serra
+serraes
+guarapari
+guarapariaes
+fundao
+fundaoes
+viana
+vianaes
+
+# ─── Apelidos e siglas ────────────────────────────────────────
+vix
+espiritosanto
+es
+capixaba
+capixabas
+
+# ─── Praias e pontos turísticos ───────────────────────────────
+praiadecamburi
+camburi
+praiadeitaparica
+itaparica
+praiadecosta
+praiadeitapua
+terceirapontaes
+pontadafruta
+guaraparibeach
+ilhadoboi
+
+# ─── Bairros de Vitória ───────────────────────────────────────
+jardimcamburi
+goiabeiras
+praiadorsueste
+enseadadosuá
+benteferreira
+santahelena
+bonfim
