@@ -22,3 +22,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+#Relatorios
+*.csv
+*.zip
