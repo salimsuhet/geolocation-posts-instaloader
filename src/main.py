@@ -69,7 +69,7 @@ def main():
     if COLLECT_MODE in ("both", "location"):
         log.info("=== Fase 1: coleta por locations ===")
         osm_locations = fetch_osm_locations()
-        ig_locations  = resolve_location_ids(L, osm_locations)
+        ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
         insert_locations(conn, ig_locations)
         collect_posts(L, conn, ig_locations)
     else:

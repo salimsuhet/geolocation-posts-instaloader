@@ -44,20 +44,56 @@ def _within_bbox(post) -> bool:
         return True
 
 
-def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
+def _load_cached_locations(conn) -> dict[str, dict]:
+    """Carrega locations já resolvidas do banco, indexadas por osm_name."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT osm_name, ig_location_id, name, ig_lat, ig_lon, osm_lat, osm_lon
+            FROM ig_locations
+            WHERE osm_name IS NOT NULL
+        """)
+        return {
+            row[0]: {
+                "id":       str(row[1]),
+                "name":     row[2],
+                "ig_lat":   row[3],
+                "ig_lon":   row[4],
+                "osm_lat":  row[5],
+                "osm_lon":  row[6],
+                "osm_name": row[0],
+            }
+            for row in cur.fetchall()
+        }
+
+
+def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
     """
     Para cada POI OSM, busca a IG location correspondente via fbsearch/places.
-    Preserva as coordenadas de ambas as fontes para uso nos métodos geo.
+    Usa cache do banco para não repetir buscas já realizadas.
     """
-    resolved = []
-    total = len(osm_locations)
+    # Carrega cache do banco se conexão disponível
+    cached = _load_cached_locations(conn) if conn else {}
+    if cached:
+        log.info(f"Cache: {len(cached)} locations já resolvidas no banco")
+
+    # Separa o que já está em cache do que precisa ser buscado
+    resolved   = [v for k, v in cached.items()]
+    to_resolve = [loc for loc in osm_locations if loc["name"] not in cached]
+
+    if not to_resolve:
+        log.info("Todos os location IDs já estão em cache — pulando busca")
+        return resolved
+
+    log.info(f"{len(to_resolve)} locations novas para resolver ({len(cached)} já em cache)")
+
+    total = len(to_resolve)
     cookies = L.context._session.cookies
     headers = {
         "User-Agent": "Instagram 275.0.0.27.98",
         "X-IG-App-ID": "936619743392459",
     }
 
-    for i, loc in enumerate(osm_locations, start=1):
+    for i, loc in enumerate(to_resolve, start=1):
         if i == 1 or i % 50 == 0 or i == total:
             log.info(f"Resolvendo location IDs: {i}/{total} ({100*i//total}%)")
         try:
@@ -74,7 +110,7 @@ def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
             items = data.get("items", [])
             if items:
                 place = items[0]["location"]
-                resolved.append({
+                entry = {
                     "id":       place["pk"],
                     "name":     place["name"],
                     "ig_lat":   place.get("lat"),
@@ -82,7 +118,25 @@ def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
                     "osm_lat":  loc["lat"],
                     "osm_lon":  loc["lon"],
                     "osm_name": loc["name"],
-                })
+                }
+                resolved.append(entry)
+
+                # Persiste no cache do banco imediatamente
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO ig_locations
+                                (ig_location_id, name, ig_lat, ig_lon, osm_lat, osm_lon, osm_name)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (ig_location_id) DO UPDATE
+                                SET osm_name = EXCLUDED.osm_name,
+                                    resolved_at = now()
+                        """, (
+                            place["pk"], place["name"],
+                            place.get("lat"), place.get("lng"),
+                            loc["lat"], loc["lon"], loc["name"],
+                        ))
+                    conn.commit()
 
             sleep_search()
 
@@ -96,7 +150,7 @@ def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
         except Exception as e:
             log.warning(f"Erro resolvendo '{loc['name']}': {e}")
 
-    log.info(f"{len(resolved)} location_ids resolvidos")
+    log.info(f"{len(resolved)} location_ids resolvidos no total")
     return resolved
 
     log.info(f"{len(resolved)} location_ids resolvidos")
