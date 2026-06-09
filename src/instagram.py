@@ -1,5 +1,6 @@
 import logging
 import random
+import requests
 import time
 from datetime import timezone
 
@@ -45,39 +46,58 @@ def _within_bbox(post) -> bool:
 
 def resolve_location_ids(L, osm_locations: list[dict]) -> list[dict]:
     """
-    Para cada POI OSM, busca a IG location correspondente.
+    Para cada POI OSM, busca a IG location correspondente via fbsearch/places.
     Preserva as coordenadas de ambas as fontes para uso nos métodos geo.
     """
     resolved = []
     total = len(osm_locations)
+    cookies = L.context._session.cookies
+    headers = {
+        "User-Agent": "Instagram 275.0.0.27.98",
+        "X-IG-App-ID": "936619743392459",
+    }
 
     for i, loc in enumerate(osm_locations, start=1):
         if i == 1 or i % 50 == 0 or i == total:
             log.info(f"Resolvendo location IDs: {i}/{total} ({100*i//total}%)")
         try:
-            search = instaloader.TopSearchResults(L.context, loc["name"])
+            r = requests.get(
+                "https://i.instagram.com/api/v1/fbsearch/places/",
+                params={"query": loc["name"], "count": 1},
+                cookies=cookies,
+                headers=headers,
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
 
-            for result in search.get_locations():
+            items = data.get("items", [])
+            if items:
+                place = items[0]["location"]
                 resolved.append({
-                    "id":       result.id,
-                    "name":     result.name,
-                    "ig_lat":   result.lat,
-                    "ig_lon":   result.lng,
+                    "id":       place["pk"],
+                    "name":     place["name"],
+                    "ig_lat":   place.get("lat"),
+                    "ig_lon":   place.get("lng"),
                     "osm_lat":  loc["lat"],
                     "osm_lon":  loc["lon"],
                     "osm_name": loc["name"],
                 })
-                break  # primeiro match apenas
 
             sleep_search()
 
-        except TooManyRequestsException:
-            backoff()
-        except Exception as e:
+        except requests.exceptions.HTTPError as e:
             msg = str(e)
             log.warning(f"Erro resolvendo '{loc['name']}': {e}")
-            if "401" in msg or "Please wait" in msg or "Unauthorized" in msg:
+            if "401" in msg or "429" in msg:
                 backoff()
+        except requests.exceptions.Timeout:
+            log.warning(f"Timeout resolvendo '{loc['name']}' — continuando")
+        except Exception as e:
+            log.warning(f"Erro resolvendo '{loc['name']}': {e}")
+
+    log.info(f"{len(resolved)} location_ids resolvidos")
+    return resolved
 
     log.info(f"{len(resolved)} location_ids resolvidos")
     return resolved
