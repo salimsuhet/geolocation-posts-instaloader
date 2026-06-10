@@ -138,8 +138,6 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
                         ))
                     conn.commit()
 
-            sleep_search()
-
         except requests.exceptions.HTTPError as e:
             msg = str(e)
             log.warning(f"Erro resolvendo '{loc['name']}': {e}")
@@ -149,6 +147,8 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
             log.warning(f"Timeout resolvendo '{loc['name']}' — continuando")
         except Exception as e:
             log.warning(f"Erro resolvendo '{loc['name']}': {e}")
+
+        sleep_search()  # sempre aguarda, independente de erro ou sucesso
 
     log.info(f"{len(resolved)} location_ids resolvidos no total")
     return resolved
