@@ -87,23 +87,26 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
     log.info(f"{len(to_resolve)} locations novas para resolver ({len(cached)} já em cache)")
 
     total = len(to_resolve)
-    cookies = L.context._session.cookies
-    headers = {
-        "User-Agent": "Instagram 275.0.0.27.98",
-        "X-IG-App-ID": "936619743392459",
-    }
+    sess = L.context._session  # sessão interna do instaloader com todos os headers corretos
 
     for i, loc in enumerate(to_resolve, start=1):
         if i == 1 or i % 50 == 0 or i == total:
             log.info(f"Resolvendo location IDs: {i}/{total} ({100*i//total}%)")
         try:
-            r = requests.get(
+            r = sess.get(
                 "https://i.instagram.com/api/v1/fbsearch/places/",
                 params={"query": loc["name"], "count": 1},
-                cookies=cookies,
-                headers=headers,
                 timeout=30,
             )
+
+            if r.status_code == 400:
+                data = r.json()
+                if data.get("spam") or data.get("feedback_required"):
+                    log.warning("Instagram sinalizou spam/rate-limit — acionando backoff")
+                    backoff()
+                    sleep_search()
+                    continue
+
             r.raise_for_status()
             data = r.json()
 
@@ -121,7 +124,6 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
                 }
                 resolved.append(entry)
 
-                # Persiste no cache do banco imediatamente
                 if conn:
                     with conn.cursor() as cur:
                         cur.execute("""
