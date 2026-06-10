@@ -41,7 +41,7 @@ services:
       BBOX: ${BBOX}
       STOP_DATE: ${STOP_DATE}
     volumes:
-      - ${INSTALOADER_SESSION_PATH}:/session:ro
+      - ${INSTALOADER_SESSION_PATH}:/session
       - ${OSM_PBF_DIR}:/data
       - ./logs:/app/logs
       - ./hashtags.txt:/app/hashtags.txt:ro
