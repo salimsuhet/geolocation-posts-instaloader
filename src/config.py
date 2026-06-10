@@ -91,6 +91,25 @@ OSM_PBF_PATH: str = os.getenv("OSM_PBF_PATH") or str(_OSM_PBF_DIR / _OSM_PBF_FIL
 _osm_stem = _OSM_PBF_FILE[: _OSM_PBF_FILE.index(".osm")]
 OSM_PBF_FILTERED_PATH: str = str(_pathlib.Path(OSM_PBF_PATH).parent / f"{_osm_stem}.osm.filtered.pbf")
 
+# ─── Modo de resolução de locations ──────────────────────────
+# osm_name  = resolve por nome via OSM + fbsearch/places (padrão)
+# geo_grid  = varre grade de coordenadas via location_search (bellingcat)
+LOCATION_RESOLVE_MODE = os.getenv("LOCATION_RESOLVE_MODE", "osm_name").strip().lower()
+if LOCATION_RESOLVE_MODE not in {"osm_name", "geo_grid"}:
+    raise ValueError(
+        f"LOCATION_RESOLVE_MODE inválido: '{LOCATION_RESOLVE_MODE}'. "
+        "Valores aceitos: osm_name | geo_grid"
+    )
+
+# Cookie do Instagram (necessário apenas para LOCATION_RESOLVE_MODE=geo_grid)
+# Obter em: DevTools → Network → qualquer request → Request Headers → cookie
+IG_COOKIE = os.getenv("IG_COOKIE", "")
+
+# Espaçamento da grade em km (LOCATION_RESOLVE_MODE=geo_grid)
+# 1.0 km → ~1600 pontos para Grande Vitória (40×40 km)
+# 0.5 km → ~6400 pontos (mais completo, mais lento)
+GEO_GRID_STEP_KM = float(os.getenv("GEO_GRID_STEP_KM", "1.0"))
+
 # ─── Instagram ────────────────────────────────────────────────
 INSTALOADER_USERNAME    = os.getenv("INSTALOADER_USERNAME")
 INSTALOADER_SESSION_DIR = os.getenv("INSTALOADER_SESSION_DIR")

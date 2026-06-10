@@ -17,10 +17,11 @@ from .config import (
     HASHTAG_AUTO_GENERATE,
     INSTALOADER_SESSION_DIR,
     INSTALOADER_USERNAME,
+    LOCATION_RESOLVE_MODE,
 )
 from .db import get_conn, insert_locations
 from .hashtags import build_hashtag_list
-from .instagram import collect_posts, collect_posts_by_hashtag, resolve_location_ids
+from .instagram import collect_posts, collect_posts_by_hashtag, resolve_location_ids, resolve_location_ids_geo_grid
 from .osm import fetch_osm_locations
 
 os.makedirs("logs", exist_ok=True)
@@ -37,6 +38,7 @@ log = logging.getLogger(__name__)
 
 def main():
     log.info(f"Modo de coleta       : {COLLECT_MODE}")
+    log.info(f"Modo resolução loc.  : {LOCATION_RESOLVE_MODE}")
     log.info(f"Hashtags automáticas : {'sim' if HASHTAG_AUTO_GENERATE else 'não'}")
     log.info(f"Bounding box         : lat [{BBOX[0]}, {BBOX[2]}] lon [{BBOX[1]}, {BBOX[3]}]")
 
@@ -64,12 +66,19 @@ def main():
                 "continuando sem login (rate limit mais agressivo)."
             )
 
-    # ── Fase 1: locations (OSM → Instagram) ───────────────────
+    # ── Fase 1: locations ─────────────────────────────────────
     osm_locations = []
     if COLLECT_MODE in ("both", "location"):
         log.info("=== Fase 1: coleta por locations ===")
-        osm_locations = fetch_osm_locations()
-        ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
+
+        if LOCATION_RESOLVE_MODE == "geo_grid":
+            log.info("Modo: geo_grid (grade de coordenadas via location_search)")
+            ig_locations = resolve_location_ids_geo_grid(conn=conn)
+        else:
+            log.info("Modo: osm_name (nome OSM → fbsearch/places)")
+            osm_locations = fetch_osm_locations()
+            ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
+
         insert_locations(conn, ig_locations)
         collect_posts(L, conn, ig_locations)
     else:

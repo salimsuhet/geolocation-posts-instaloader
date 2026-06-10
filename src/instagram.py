@@ -7,7 +7,7 @@ from datetime import timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
-from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE
+from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM
 from .db import insert_geolocations, insert_posts
 from .geo import all_geo_methods, GeoResult
 
@@ -155,7 +155,119 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
     log.info(f"{len(resolved)} location_ids resolvidos no total")
     return resolved
 
-    log.info(f"{len(resolved)} location_ids resolvidos")
+
+def _geo_grid_points(bbox: tuple, step_km: float) -> list[tuple[float, float]]:
+    """
+    Gera grade de pontos (lat, lon) sobre o bounding box com espaçamento em km.
+    1 grau de latitude ≈ 111 km; 1 grau de longitude ≈ 111 * cos(lat) km.
+    """
+    import math
+    lat_min, lon_min, lat_max, lon_max = bbox
+    lat_step = step_km / 111.0
+    mid_lat   = (lat_min + lat_max) / 2
+    lon_step  = step_km / (111.0 * math.cos(math.radians(mid_lat)))
+
+    points = []
+    lat = lat_min
+    while lat <= lat_max:
+        lon = lon_min
+        while lon <= lon_max:
+            points.append((round(lat, 6), round(lon, 6)))
+            lon += lon_step
+        lat += lat_step
+    return points
+
+
+def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> list[dict]:
+    """
+    Chama o endpoint location_search do Instagram para um ponto específico.
+    Retorna lista de venues conforme a API do Bellingcat.
+    """
+    try:
+        r = requests.get(
+            "https://www.instagram.com/location_search/",
+            params={"latitude": lat, "longitude": lon, "__a": 1},
+            headers={"Cookie": cookie},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        return data.get("venues", [])
+    except Exception:
+        return []
+
+
+def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
+    """
+    Descobre locations do Instagram varrendo uma grade de coordenadas sobre
+    o bounding box configurado — abordagem do Bellingcat instagram-location-search.
+
+    Não depende do OSM nem de busca por nome. Requer IG_COOKIE no .env.
+    Usa cache do banco: pontos já cobertos não são repetidos.
+    """
+    if not IG_COOKIE:
+        raise ValueError(
+            "IG_COOKIE não definido no .env. "
+            "Necessário para LOCATION_RESOLVE_MODE=geo_grid. "
+            "Obtenha em: DevTools → Network → qualquer request do Instagram "
+            "→ Request Headers → cookie"
+        )
+
+    # Carrega IDs já conhecidos para deduplicar
+    known_ids: set[str] = set()
+    if conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT ig_location_id FROM ig_locations")
+            known_ids = {str(row[0]) for row in cur.fetchall()}
+    if known_ids:
+        log.info(f"Cache geo_grid: {len(known_ids)} locations já no banco")
+
+    points = _geo_grid_points(BBOX, GEO_GRID_STEP_KM)
+    total  = len(points)
+    log.info(f"Grade geo_grid: {total} pontos ({GEO_GRID_STEP_KM} km de espaçamento)")
+
+    resolved: list[dict] = []
+    new_count = 0
+
+    for i, (lat, lon) in enumerate(points, start=1):
+        if i == 1 or i % 100 == 0 or i == total:
+            log.info(f"geo_grid: {i}/{total} pontos | {new_count} locations novas")
+
+        venues = _fetch_locations_at_point(lat, lon, IG_COOKIE)
+
+        for v in venues:
+            ext_id = str(v.get("external_id", ""))
+            if not ext_id or ext_id in known_ids:
+                continue
+
+            entry = {
+                "id":       ext_id,
+                "name":     v.get("name", ""),
+                "ig_lat":   v.get("lat"),
+                "ig_lon":   v.get("lng"),
+                "osm_lat":  None,
+                "osm_lon":  None,
+                "osm_name": None,
+            }
+            resolved.append(entry)
+            known_ids.add(ext_id)
+            new_count += 1
+
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO ig_locations
+                            (ig_location_id, name, ig_lat, ig_lon)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (ig_location_id) DO NOTHING
+                    """, (ext_id, v.get("name", ""), v.get("lat"), v.get("lng")))
+                conn.commit()
+
+        # pausa leve entre pontos (endpoint menos sensível que fbsearch)
+        time.sleep(random.uniform(0.3, 0.8))
+
+    log.info(f"geo_grid concluído: {new_count} locations novas descobertas")
     return resolved
 
 
