@@ -252,7 +252,7 @@ mas correlaciona diretamente com o OSM.
 LOCATION_RESOLVE_MODE=osm_name
 ```
 
-### `geo_grid` (Bellingcat)
+### `geo_grid` ([Bellingcat](https://github.com/bellingcat/instagram-location-search))
 
 Varre uma grade de pontos sobre o BBOX usando o endpoint `location_search`
 do Instagram. Retorna todas as locations registradas naquela área sem depender
