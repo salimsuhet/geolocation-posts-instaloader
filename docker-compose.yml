@@ -43,6 +43,8 @@ services:
       LOCATION_RESOLVE_MODE: ${LOCATION_RESOLVE_MODE}
       IG_COOKIE: ${IG_COOKIE}
       GEO_GRID_STEP_KM: ${GEO_GRID_STEP_KM}
+      T_MIN_SEARCH: ${T_MIN_SEARCH}
+      T_MAX_SEARCH: ${T_MAX_SEARCH}
     volumes:
       - ${INSTALOADER_SESSION_PATH}:/session
       - ${OSM_PBF_DIR}:/data

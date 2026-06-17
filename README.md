@@ -181,6 +181,10 @@ LOCATION_RESOLVE_MODE=osm_name
 IG_COOKIE=
 GEO_GRID_STEP_KM=1.0
 
+# Pausa aleatória (segundos) entre cada busca de location
+T_MIN_SEARCH=8
+T_MAX_SEARCH=16
+
 # --- Modo de coleta ---------------------------------------------
 # both | location | hashtag
 COLLECT_MODE=both
@@ -271,6 +275,32 @@ Estimativa de pontos na grade para a Grande Vitória (40×40 km):
 | `2.0`              | ~400            | ~10 min        |
 | `1.0`              | ~1600           | ~30 min        |
 | `0.5`              | ~6400           | ~2 h           |
+
+### Controlar o ritmo das requisições (`T_MIN_SEARCH` / `T_MAX_SEARCH`)
+
+Cada busca de location (`fbsearch/places` no modo `osm_name` ou
+`location_search` no modo `geo_grid`) aguarda um tempo aleatório entre
+`T_MIN_SEARCH` e `T_MAX_SEARCH` segundos antes da próxima chamada.
+
+```dotenv
+T_MIN_SEARCH=8
+T_MAX_SEARCH=16
+```
+
+Se o Instagram bloquear a conta com `401 Unauthorized`, `429 Too Many
+Requests` ou `feedback_required` (spam), aumente esses valores antes de
+tentar novamente:
+
+```dotenv
+# mais conservador — útil após um bloqueio
+T_MIN_SEARCH=20
+T_MAX_SEARCH=40
+```
+
+Valores mais altos reduzem o risco de bloqueio mas aumentam o tempo total
+da Fase 1. Se o bloqueio persistir mesmo com valores altos, a conta já
+pode estar marcada — nesse caso, espere 24–48h sem rodar o coletor antes
+de tentar de novo.
 
 ---
 

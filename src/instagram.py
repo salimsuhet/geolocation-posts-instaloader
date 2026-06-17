@@ -7,7 +7,7 @@ from datetime import timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
-from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM
+from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, T_MIN_SEARCH, T_MAX_SEARCH
 from .db import insert_geolocations, insert_posts
 from .geo import all_geo_methods, GeoResult
 
@@ -19,8 +19,8 @@ def sleep():
 
 
 def sleep_search():
-    """Pausa conservadora entre chamadas ao topsearch (mais sensível a bloqueio)."""
-    time.sleep(BASE_SLEEP_SEARCH * random.uniform(0.8, 1.6))
+    """Pausa aleatória entre T_MIN_SEARCH e T_MAX_SEARCH (configurável no .env)."""
+    time.sleep(random.uniform(T_MIN_SEARCH, T_MAX_SEARCH))
 
 
 def backoff():
@@ -264,8 +264,8 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
                     """, (ext_id, v.get("name", ""), v.get("lat"), v.get("lng")))
                 conn.commit()
 
-        # pausa leve entre pontos (endpoint menos sensível que fbsearch)
-        time.sleep(random.uniform(0.3, 0.8))
+        # pausa configurável entre pontos (mesmo intervalo do osm_name)
+        sleep_search()
 
     log.info(f"geo_grid concluído: {new_count} locations novas descobertas")
     return resolved

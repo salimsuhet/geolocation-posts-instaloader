@@ -52,6 +52,19 @@ if COLLECT_MODE not in {"both", "location", "hashtag"}:
 # false → usa apenas a lista fixa do hashtags.txt
 HASHTAG_AUTO_GENERATE = os.getenv("HASHTAG_AUTO_GENERATE", "true").strip().lower() == "true"
 
+# ─── Rate limit customizável (busca de locations) ──────────────
+# Tempo aleatório entre T_MIN e T_MAX (segundos) para cada chamada
+# de busca de location (fbsearch/places e location_search/geo_grid).
+# Use valores altos se o Instagram estiver bloqueando por excesso
+# de requisições (ex: T_MIN=15, T_MAX=30).
+T_MIN_SEARCH = float(os.getenv("T_MIN_SEARCH", "8"))
+T_MAX_SEARCH = float(os.getenv("T_MAX_SEARCH", "16"))
+if T_MIN_SEARCH > T_MAX_SEARCH:
+    raise ValueError(
+        f"T_MIN_SEARCH ({T_MIN_SEARCH}) não pode ser maior que "
+        f"T_MAX_SEARCH ({T_MAX_SEARCH})"
+    )
+
 # ─── Rate limit e batch ───────────────────────────────────────
 # topsearch: endpoint mais sensível a bloqueio, usar ritmo conservador
 REQUESTS_PER_MINUTE_SEARCH = 6
