@@ -8,7 +8,7 @@ import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
 from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, T_MIN_SEARCH, T_MAX_SEARCH
-from .db import insert_geolocations, insert_posts
+from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned
 from .geo import all_geo_methods, GeoResult
 
 log = logging.getLogger(__name__)
@@ -178,10 +178,12 @@ def _geo_grid_points(bbox: tuple, step_km: float) -> list[tuple[float, float]]:
     return points
 
 
-def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> list[dict]:
+def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool, list[dict]]:
     """
     Chama o endpoint location_search do Instagram para um ponto específico.
-    Retorna lista de venues conforme a API do Bellingcat.
+    Retorna (sucesso, venues). sucesso=False indica erro de rede/HTTP — o
+    ponto não deve ser marcado como escaneado, para ser tentado de novo na
+    próxima rodada.
     """
     try:
         r = requests.get(
@@ -191,11 +193,11 @@ def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> list[dict]
             timeout=10,
         )
         if r.status_code != 200:
-            return []
+            return False, []
         data = r.json()
-        return data.get("venues", [])
+        return True, data.get("venues", [])
     except Exception:
-        return []
+        return False, []
 
 
 def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
@@ -225,16 +227,29 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
 
     points = _geo_grid_points(BBOX, GEO_GRID_STEP_KM)
     total  = len(points)
-    log.info(f"Grade geo_grid: {total} pontos ({GEO_GRID_STEP_KM} km de espaçamento)")
+
+    # Cache de pontos já escaneados (por step_km) — pula o que já foi feito
+    scanned_points = load_scanned_grid_points(conn, GEO_GRID_STEP_KM) if conn else set()
+    pending = [p for p in points if p not in scanned_points]
+
+    log.info(
+        f"Grade geo_grid: {total} pontos totais ({GEO_GRID_STEP_KM} km), "
+        f"{len(scanned_points)} já escaneados, {len(pending)} pendentes"
+    )
+
+    if not pending:
+        log.info("Grade geo_grid totalmente em cache — nenhuma consulta necessária")
+        return []
 
     resolved: list[dict] = []
     new_count = 0
+    pending_total = len(pending)
 
-    for i, (lat, lon) in enumerate(points, start=1):
-        if i == 1 or i % 100 == 0 or i == total:
-            log.info(f"geo_grid: {i}/{total} pontos | {new_count} locations novas")
+    for i, (lat, lon) in enumerate(pending, start=1):
+        if i == 1 or i % 100 == 0 or i == pending_total:
+            log.info(f"geo_grid: {i}/{pending_total} pontos pendentes | {new_count} locations novas")
 
-        venues = _fetch_locations_at_point(lat, lon, IG_COOKIE)
+        success, venues = _fetch_locations_at_point(lat, lon, IG_COOKIE)
 
         for v in venues:
             ext_id = str(v.get("external_id", ""))
@@ -264,10 +279,16 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
                     """, (ext_id, v.get("name", ""), v.get("lat"), v.get("lng")))
                 conn.commit()
 
+        if conn:
+            if success:
+                mark_grid_point_scanned(conn, lat, lon, GEO_GRID_STEP_KM, len(venues))
+            else:
+                log.warning(f"Falha ao consultar ({lat}, {lon}) — será tentado de novo na próxima rodada")
+
         # pausa configurável entre pontos (mesmo intervalo do osm_name)
         sleep_search()
 
-    log.info(f"geo_grid concluído: {new_count} locations novas descobertas")
+    log.info(f"geo_grid concluído: {new_count} locations novas descobertas, {pending_total} pontos escaneados")
     return resolved
 
 

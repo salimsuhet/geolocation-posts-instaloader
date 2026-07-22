@@ -36,15 +36,17 @@ BBOX_CENTER_LAT = (BBOX[0] + BBOX[2]) / 2
 BBOX_CENTER_LON = (BBOX[1] + BBOX[3]) / 2
 
 # ─── Modo de coleta ───────────────────────────────────────────
-# COLLECT_MODE: "both" | "location" | "hashtag"
-#   both     → roda as duas fases (padrão)
-#   location → somente coleta por location (OSM → Instagram)
-#   hashtag  → somente coleta por hashtag
+# COLLECT_MODE: "both" | "location" | "hashtag" | "geo_grid_scan"
+#   both           → roda as duas fases (padrão)
+#   location       → somente coleta por location (OSM → Instagram)
+#   hashtag        → somente coleta por hashtag
+#   geo_grid_scan  → só varre a grade geo_grid e salva locations; não coleta posts
+#                    (requer LOCATION_RESOLVE_MODE=geo_grid)
 COLLECT_MODE = os.getenv("COLLECT_MODE", "both").strip().lower()
-if COLLECT_MODE not in {"both", "location", "hashtag"}:
+if COLLECT_MODE not in {"both", "location", "hashtag", "geo_grid_scan"}:
     raise ValueError(
         f"COLLECT_MODE inválido: '{COLLECT_MODE}'. "
-        "Valores aceitos: both | location | hashtag"
+        "Valores aceitos: both | location | hashtag | geo_grid_scan"
     )
 
 # ─── Geração automática de hashtags ──────────────────────────

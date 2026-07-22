@@ -1,4 +1,4 @@
-.PHONY: up db collect logs psql stop clean
+.PHONY: up db collect scan-grid logs psql stop clean
 
 up:          ## Sobe banco + coletor (build incluído)
 	docker compose up --build
@@ -8,6 +8,9 @@ db:          ## Sobe apenas o banco em segundo plano
 
 collect:     ## Roda o coletor uma vez (banco deve estar no ar)
 	docker compose run --rm collector
+
+scan-grid:   ## Roda só a varredura geo_grid (descobre locations, não coleta posts; requer LOCATION_RESOLVE_MODE=geo_grid no .env)
+	docker compose run --rm -e COLLECT_MODE=geo_grid_scan collector
 
 logs:        ## Acompanha os logs do coletor em tempo real
 	docker compose logs -f collector

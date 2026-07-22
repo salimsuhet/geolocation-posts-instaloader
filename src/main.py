@@ -2,7 +2,7 @@
 Coleta de posts Instagram georreferenciados - Grande Vitória ES
 
 Variáveis de controle (.env):
-  COLLECT_MODE          both | location | hashtag
+  COLLECT_MODE          both | location | hashtag | geo_grid_scan
   HASHTAG_AUTO_GENERATE true | false
 """
 
@@ -19,7 +19,7 @@ from .config import (
     INSTALOADER_USERNAME,
     LOCATION_RESOLVE_MODE,
 )
-from .db import get_conn, insert_locations
+from .db import get_conn, insert_locations, load_all_locations
 from .hashtags import build_hashtag_list
 from .instagram import collect_posts, collect_posts_by_hashtag, resolve_location_ids, resolve_location_ids_geo_grid
 from .osm import fetch_osm_locations
@@ -66,6 +66,22 @@ def main():
                 "continuando sem login (rate limit mais agressivo)."
             )
 
+    # ── Fase 0: varredura geo_grid isolada (sem coleta de posts) ──
+    if COLLECT_MODE == "geo_grid_scan":
+        log.info("=== Varredura geo_grid (somente descoberta de locations) ===")
+        if LOCATION_RESOLVE_MODE != "geo_grid":
+            raise ValueError(
+                "COLLECT_MODE=geo_grid_scan requer LOCATION_RESOLVE_MODE=geo_grid"
+            )
+        new_locations = resolve_location_ids_geo_grid(conn=conn)
+        insert_locations(conn, new_locations)
+        log.info(
+            f"Varredura concluída — {len(new_locations)} locations novas. "
+            "Use run-export.ps1/.sh com a query geo_grid_locations_lista para revisar."
+        )
+        conn.close()
+        return
+
     # ── Fase 1: locations ─────────────────────────────────────
     osm_locations = []
     if COLLECT_MODE in ("both", "location"):
@@ -73,13 +89,16 @@ def main():
 
         if LOCATION_RESOLVE_MODE == "geo_grid":
             log.info("Modo: geo_grid (grade de coordenadas via location_search)")
-            ig_locations = resolve_location_ids_geo_grid(conn=conn)
+            new_locations = resolve_location_ids_geo_grid(conn=conn)
+            insert_locations(conn, new_locations)
+            ig_locations = load_all_locations(conn)
+            log.info(f"Usando {len(ig_locations)} locations do cache (banco) para coleta de posts")
         else:
             log.info("Modo: osm_name (nome OSM → fbsearch/places)")
             osm_locations = fetch_osm_locations()
             ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
+            insert_locations(conn, ig_locations)
 
-        insert_locations(conn, ig_locations)
         collect_posts(L, conn, ig_locations)
     else:
         log.info("=== Fase 1 ignorada (COLLECT_MODE=hashtag) ===")

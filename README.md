@@ -225,6 +225,11 @@ O coletor executa as fases conforme `COLLECT_MODE`:
 | `both`         | ✅                                         | ✅                 |
 | `location`     | ✅                                         | ❌                 |
 | `hashtag`      | ❌ (carrega POIs só para gerar hashtags)   | ✅                 |
+| `geo_grid_scan`| Só varre a grade e salva locations (❌ posts) | ❌              |
+
+> Se `LOCATION_RESOLVE_MODE=geo_grid`, veja a seção
+> [Varredura em duas fases](#varredura-em-duas-fases-recomendado) — recomendado
+> rodar `make scan-grid` antes de coletar posts.
 
 Comandos úteis:
 
@@ -275,6 +280,42 @@ Estimativa de pontos na grade para a Grande Vitória (40×40 km):
 | `2.0`              | ~400            | ~10 min        |
 | `1.0`              | ~1600           | ~30 min        |
 | `0.5`              | ~6400           | ~2 h           |
+
+#### Varredura em duas fases (recomendado)
+
+A varredura da grade (`location_search` por ponto) e a coleta de posts são
+duas fases independentes. Cada ponto da grade já consultado fica registrado
+na tabela `ig_geo_grid_scanned` (por `GEO_GRID_STEP_KM`) — reexecuções pulam
+os pontos já escaneados e só refazem pontos que falharam por erro de
+rede/HTTP. Isso permite interromper e retomar a varredura sem perder
+progresso, e reaproveitar o banco como cache em rodadas futuras.
+
+**1. Rode só a varredura**, sem coletar posts:
+
+```powershell
+make scan-grid
+```
+
+Isso roda o coletor com `COLLECT_MODE=geo_grid_scan` (sem precisar editar o
+`.env`), varre a grade inteira e grava todas as locations descobertas em
+`ig_locations`.
+
+**2. Revise as locations descobertas** exportando um CSV:
+
+```powershell
+.\run-export.ps1 -Query geo_grid_locations_lista
+```
+```bash
+./run-export.sh geo_grid_locations_lista
+```
+
+Gera `geo_grid_locations_lista.csv` na raiz do projeto com todas as
+locations encontradas (nome, coordenadas, se teve match com OSM).
+
+**3. Só depois, colete os posts** dessas locations, ajustando `COLLECT_MODE`
+no `.env` para `location` ou `both` e rodando `make collect` — a coleta usa
+todas as locations já salvas no banco (o cache completo), não só as
+descobertas na última execução da varredura.
 
 ### Controlar o ritmo das requisições (`T_MIN_SEARCH` / `T_MAX_SEARCH`)
 
@@ -388,7 +429,26 @@ chmod +x run-queries.sh   # só na primeira vez
 | `post_by_shortcode.sql`        | Todos os métodos para um post específico             |
 | `locations_resolvidas_count.sql` | Total de POIs OSM com match no Instagram           |
 | `locations_resolvidas_lista.sql` | Lista de locations resolvidas com coordenadas      |
+| `geo_grid_locations_lista.sql`  | Todas as locations descobertas via geo_grid (com ou sem match OSM) |
 | `hashtags_automaticas_lista.sql` | Hashtags geradas com contagem de posts             |
+
+### Exportar uma query direto para CSV
+
+Os scripts `run-export.ps1` (Windows) e `run-export.sh` (Linux/Mac) rodam
+qualquer query de `queries/` e salvam o resultado como `.csv` local em um
+único comando (sem precisar de `docker exec` + `docker cp` manual):
+
+```powershell
+.\run-export.ps1 -Query geo_grid_locations_lista
+# gera geo_grid_locations_lista.csv na raiz do projeto
+
+.\run-export.ps1 -Query method_coverage -Out coverage.csv
+```
+
+```bash
+./run-export.sh geo_grid_locations_lista
+OUT=coverage.csv ./run-export.sh method_coverage
+```
 
 ### Consultas rápidas
 
@@ -432,13 +492,16 @@ docker cp gv_instagram_db:/tmp/geolocations.csv .\geolocations.csv
 │   ├── instagram.py    # coleta por location e hashtag; resolve location IDs
 │   └── main.py         # entrypoint — orquestra as fases
 ├── migrations/
-│   └── 001_initial_schema.sql
+│   ├── 001_initial_schema.sql
+│   └── 002_geo_grid_cache.sql   # cache de pontos já escaneados no geo_grid
 ├── queries/            # queries SQL prontas para análise
 ├── session/            # sessão do Instaloader (não commitar)
 ├── logs/               # logs persistentes (gerado automaticamente)
 ├── hashtags.txt        ← edite para ajustar as hashtags fixas
 ├── run-queries.ps1     ← executa queries no Windows
 ├── run-queries.sh      ← executa queries no Linux/Mac
+├── run-export.ps1      ← exporta uma query para .csv no Windows
+├── run-export.sh       ← exporta uma query para .csv no Linux/Mac
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Makefile
