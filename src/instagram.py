@@ -309,7 +309,7 @@ def collect_posts(L, conn, locations: list[dict]):
         geo_batch  = []
 
         try:
-            posts = instaloader.Post.get_posts_by_location(L.context, ig_loc["id"])
+            posts = L.get_location_posts(str(ig_loc["id"]))
 
             for post in posts:
                 post_date = post.date_utc
