@@ -300,6 +300,31 @@ Isso roda o coletor com `COLLECT_MODE=geo_grid_scan` (sem precisar editar o
 `.env`), varre a grade inteira e grava todas as locations descobertas em
 `ig_locations`.
 
+> `make scan-grid` roda em primeiro plano (`docker compose run`, sem `-d`).
+> Fechar o terminal interrompe a varredura, mas nada se perde — como o
+> progresso fica salvo ponto a ponto, é só rodar `make scan-grid` de novo
+> para retomar de onde parou.
+
+**Acompanhando o progresso:** o log do coletor só imprime uma linha a cada
+100 pontos processados (`geo_grid: X/1890 pontos pendentes | Y locations
+novas`), não a cada ponto — senão seriam milhares de linhas ao longo de ~28h
+de varredura (veja a tabela de tempo estimado acima). Isso significa que o
+log pode ficar "parado" por bastante tempo (com `T_MIN_SEARCH=8` /
+`T_MAX_SEARCH=100`, ~90 min entre uma atualização e outra) mesmo com a
+varredura avançando normalmente por baixo.
+
+Para conferir o progresso real a qualquer momento, sem depender do log,
+rode a query `geo_grid_progresso` (mostra quantos pontos já foram
+escaneados, total de locations no banco e o horário do último ponto
+processado):
+
+```powershell
+.\run-queries.ps1 -Query geo_grid_progresso
+```
+```bash
+./run-queries.sh geo_grid_progresso
+```
+
 **2. Revise as locations descobertas** exportando um CSV:
 
 ```powershell
@@ -430,6 +455,7 @@ chmod +x run-queries.sh   # só na primeira vez
 | `locations_resolvidas_count.sql` | Total de POIs OSM com match no Instagram           |
 | `locations_resolvidas_lista.sql` | Lista de locations resolvidas com coordenadas      |
 | `geo_grid_locations_lista.sql`  | Todas as locations descobertas via geo_grid (com ou sem match OSM) |
+| `geo_grid_progresso.sql`       | Progresso da varredura geo_grid: pontos escaneados, locations e último ponto processado |
 | `hashtags_automaticas_lista.sql` | Hashtags geradas com contagem de posts             |
 
 ### Exportar uma query direto para CSV
