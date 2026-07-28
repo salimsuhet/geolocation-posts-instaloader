@@ -178,12 +178,12 @@ def _geo_grid_points(bbox: tuple, step_km: float) -> list[tuple[float, float]]:
     return points
 
 
-def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool, list[dict]]:
+def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool, list[dict], str]:
     """
     Chama o endpoint location_search do Instagram para um ponto específico.
-    Retorna (sucesso, venues). sucesso=False indica erro de rede/HTTP — o
-    ponto não deve ser marcado como escaneado, para ser tentado de novo na
-    próxima rodada.
+    Retorna (sucesso, venues, motivo). sucesso=False indica que o ponto não
+    deve ser marcado como escaneado, para ser tentado de novo na próxima
+    rodada. motivo é uma descrição curta da falha (vazio quando sucesso).
     """
     try:
         r = requests.get(
@@ -193,11 +193,23 @@ def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool
             timeout=10,
         )
         if r.status_code != 200:
-            return False, []
-        data = r.json()
-        return True, data.get("venues", [])
-    except Exception:
-        return False, []
+            return False, [], f"HTTP {r.status_code}"
+
+        try:
+            data = r.json()
+        except ValueError:
+            # Instagram devolveu 200 com HTML em vez de JSON — geralmente
+            # sinal de cookie expirado ou conta sinalizada (login/checkpoint).
+            body_lower = r.text.lower()
+            if any(marker in body_lower for marker in ("login", "checkpoint", "challenge")):
+                return False, [], "IG_COOKIE expirado ou conta sinalizada (Instagram devolveu página de login/checkpoint em vez de JSON)"
+            return False, [], "resposta não é JSON válido"
+
+        return True, data.get("venues", []), ""
+    except requests.exceptions.RequestException as e:
+        return False, [], f"erro de rede: {e}"
+    except Exception as e:
+        return False, [], f"erro inesperado: {e}"
 
 
 def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
@@ -249,7 +261,7 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
         if i == 1 or i % 100 == 0 or i == pending_total:
             log.info(f"geo_grid: {i}/{pending_total} pontos pendentes | {new_count} locations novas")
 
-        success, venues = _fetch_locations_at_point(lat, lon, IG_COOKIE)
+        success, venues, fail_reason = _fetch_locations_at_point(lat, lon, IG_COOKIE)
 
         for v in venues:
             ext_id = str(v.get("external_id", ""))
@@ -283,7 +295,7 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
             if success:
                 mark_grid_point_scanned(conn, lat, lon, GEO_GRID_STEP_KM, len(venues))
             else:
-                log.warning(f"Falha ao consultar ({lat}, {lon}) — será tentado de novo na próxima rodada")
+                log.warning(f"Falha ao consultar ({lat}, {lon}): {fail_reason} — será tentado de novo na próxima rodada")
 
         # pausa configurável entre pontos (mesmo intervalo do osm_name)
         sleep_search()
