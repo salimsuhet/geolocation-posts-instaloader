@@ -7,7 +7,7 @@ from datetime import timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
-from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH
+from .config import BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH, T_MIN_POST, T_MAX_POST
 from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned
 from .geo import all_geo_methods, GeoResult
 
@@ -15,7 +15,8 @@ log = logging.getLogger(__name__)
 
 
 def sleep():
-    time.sleep(BASE_SLEEP * random.uniform(0.7, 1.5))
+    """Pausa aleatória entre T_MIN_POST e T_MAX_POST (configurável no .env)."""
+    time.sleep(random.uniform(T_MIN_POST, T_MAX_POST))
 
 
 def sleep_search():
@@ -423,6 +424,11 @@ def collect_posts(L, conn, locations: list[dict]):
             insert_posts(conn, post_batch)
             insert_geolocations(conn, geo_batch)
             log.info(f"  → {len(post_batch)} posts / {len(geo_batch)} geos inseridos (flush final)")
+
+        # garante uma pausa mínima por location mesmo quando ela não tem
+        # posts (senão locations vazias em sequência não pausam nada, já
+        # que o sleep() do laço acima só roda por post processado)
+        sleep()
 
 
 def collect_posts_by_hashtag(L, conn, hashtags: list[str]):

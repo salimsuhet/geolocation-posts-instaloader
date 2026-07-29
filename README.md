@@ -363,7 +363,13 @@ no `.env` para `location` ou `both` e rodando `make collect` — a coleta usa
 todas as locations já salvas no banco (o cache completo), não só as
 descobertas na última execução da varredura.
 
-### Controlar o ritmo das requisições (`T_MIN_SEARCH` / `T_MAX_SEARCH`)
+### Controlar o ritmo das requisições
+
+O coletor usa dois pares independentes de `T_MIN`/`T_MAX`, um para cada
+tipo de chamada — assim dá pra deixar a busca de locations bem conservadora
+sem deixar a coleta de posts desnecessariamente lenta (ou vice-versa).
+
+#### Busca de locations (`T_MIN_SEARCH` / `T_MAX_SEARCH`)
 
 Cada busca de location (`fbsearch/places` no modo `osm_name` ou
 `location_search` no modo `geo_grid`) aguarda um tempo aleatório entre
@@ -384,10 +390,31 @@ T_MIN_SEARCH=20
 T_MAX_SEARCH=40
 ```
 
-Valores mais altos reduzem o risco de bloqueio mas aumentam o tempo total
-da Fase 1. Se o bloqueio persistir mesmo com valores altos, a conta já
-pode estar marcada — nesse caso, espere 24–48h sem rodar o coletor antes
-de tentar de novo.
+#### Coleta de posts (`T_MIN_POST` / `T_MAX_POST`)
+
+Depois de cada post processado (e depois de cada location/hashtag
+visitada, mesmo quando ela não tem posts) o coletor aguarda um tempo
+aleatório entre `T_MIN_POST` e `T_MAX_POST` segundos. É o endpoint menos
+restritivo, por isso o padrão é bem mais rápido que o de busca:
+
+```dotenv
+T_MIN_POST=2.8
+T_MAX_POST=6.0
+```
+
+Se notar bloqueios durante a coleta de posts (não durante a busca de
+locations), aumente esses valores do mesmo jeito:
+
+```dotenv
+# mais conservador — útil após um bloqueio na coleta de posts
+T_MIN_POST=10
+T_MAX_POST=20
+```
+
+Valores mais altos (em qualquer um dos dois pares) reduzem o risco de
+bloqueio mas aumentam o tempo total. Se o bloqueio persistir mesmo com
+valores altos, a conta já pode estar marcada — nesse caso, espere 24–48h
+sem rodar o coletor antes de tentar de novo.
 
 ---
 

@@ -67,14 +67,24 @@ if T_MIN_SEARCH > T_MAX_SEARCH:
         f"T_MAX_SEARCH ({T_MAX_SEARCH})"
     )
 
+# ─── Rate limit customizável (coleta de posts/hashtags/locations) ──
+# Tempo aleatório entre T_MIN_POST e T_MAX_POST (segundos) após cada post
+# processado e após cada location/hashtag visitada (mesmo sem posts).
+# Endpoint menos restritivo que a busca de locations (T_MIN_SEARCH acima),
+# por isso o padrão é mais rápido — mas pode ser aumentado do mesmo jeito
+# se o Instagram começar a bloquear por excesso de requisições.
+T_MIN_POST = float(os.getenv("T_MIN_POST", "2.8"))
+T_MAX_POST = float(os.getenv("T_MAX_POST", "6.0"))
+if T_MIN_POST > T_MAX_POST:
+    raise ValueError(
+        f"T_MIN_POST ({T_MIN_POST}) não pode ser maior que "
+        f"T_MAX_POST ({T_MAX_POST})"
+    )
+
 # ─── Rate limit e batch ───────────────────────────────────────
 # topsearch: endpoint mais sensível a bloqueio, usar ritmo conservador
 REQUESTS_PER_MINUTE_SEARCH = 6
 BASE_SLEEP_SEARCH = 60 / REQUESTS_PER_MINUTE_SEARCH   # ~10 s entre buscas
-
-# coleta de posts/hashtags: endpoint menos restritivo
-REQUESTS_PER_MINUTE = 15
-BASE_SLEEP = 60 / REQUESTS_PER_MINUTE                 # ~4 s entre posts
 
 BATCH_SIZE = 50
 

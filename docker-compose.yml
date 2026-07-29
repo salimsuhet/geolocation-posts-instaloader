@@ -46,6 +46,8 @@ services:
       GEO_GRID_ENDPOINT_MODE: ${GEO_GRID_ENDPOINT_MODE}
       T_MIN_SEARCH: ${T_MIN_SEARCH}
       T_MAX_SEARCH: ${T_MAX_SEARCH}
+      T_MIN_POST: ${T_MIN_POST}
+      T_MAX_POST: ${T_MAX_POST}
     volumes:
       - ${INSTALOADER_SESSION_PATH}:/session
       - ${OSM_PBF_DIR}:/data
