@@ -281,6 +281,27 @@ Estimativa de pontos na grade para a Grande Vitória (40×40 km):
 | `1.0`              | ~1600           | ~30 min        |
 | `0.5`              | ~6400           | ~2 h           |
 
+#### `GEO_GRID_ENDPOINT_MODE`: qual endpoint usar por ponto
+
+O `location_search` do Instagram é acessível por dois domínios diferentes:
+
+| Valor    | Endpoint                                        | Observação |
+|----------|--------------------------------------------------|------------|
+| `mobile` | `i.instagram.com/api/v1/location_search`          | API do app mobile |
+| `web`    | `www.instagram.com/location_search`               | Técnica original do [Bellingcat](https://github.com/bellingcat/instagram-location-search) |
+| `both`   | Tenta `mobile` primeiro; só tenta `web` se `mobile` falhar | **Padrão** |
+
+Na prática, algumas contas têm um dos dois endpoints bloqueado/restrito
+mesmo com cookie válido (o Instagram devolve a página de login/checkpoint
+em vez de JSON, com `status 200` — não é sempre um erro HTTP claro). O modo
+`both` dá uma segunda chance ao ponto antes de desistir dele, sem custo
+extra na maioria das vezes (só faz a segunda chamada quando a primeira
+falha).
+
+```dotenv
+GEO_GRID_ENDPOINT_MODE=both
+```
+
 #### Varredura em duas fases (recomendado)
 
 A varredura da grade (`location_search` por ponto) e a coleta de posts são

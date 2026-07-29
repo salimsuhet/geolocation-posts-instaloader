@@ -7,7 +7,7 @@ from datetime import timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
-from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, T_MIN_SEARCH, T_MAX_SEARCH
+from .config import BASE_SLEEP, BASE_SLEEP_SEARCH, BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH
 from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned
 from .geo import all_geo_methods, GeoResult
 
@@ -178,38 +178,90 @@ def _geo_grid_points(bbox: tuple, step_km: float) -> list[tuple[float, float]]:
     return points
 
 
+def _location_search_mobile(lat: float, lon: float, cookie: str) -> requests.Response:
+    """Endpoint da API mobile — costuma ser mais resiliente por conta."""
+    return requests.get(
+        "https://i.instagram.com/api/v1/location_search/",
+        params={"latitude": lat, "longitude": lon},
+        headers={
+            "Cookie": cookie,
+            "User-Agent": "Instagram 76.0.0.15.395 Android",
+            "X-IG-App-ID": "936619743392459",
+            "Accept": "*/*",
+        },
+        timeout=10,
+    )
+
+
+def _location_search_web(lat: float, lon: float, cookie: str) -> requests.Response:
+    """Endpoint web original (técnica do Bellingcat) — algumas contas têm
+    esse endpoint especificamente restrito mesmo com cookie válido."""
+    return requests.get(
+        "https://www.instagram.com/location_search/",
+        params={"latitude": lat, "longitude": lon, "__a": 1},
+        headers={"Cookie": cookie},
+        timeout=10,
+    )
+
+
+_LOCATION_SEARCH_FETCHERS = {
+    "mobile": _location_search_mobile,
+    "web": _location_search_web,
+}
+
+
+def _parse_location_search_response(r: requests.Response) -> tuple[bool, list[dict], str]:
+    """Interpreta a resposta de um dos endpoints location_search."""
+    if r.status_code != 200:
+        return False, [], f"HTTP {r.status_code}"
+
+    try:
+        data = r.json()
+    except ValueError:
+        # Instagram devolveu 200 com HTML em vez de JSON — geralmente
+        # sinal de cookie expirado, conta sinalizada, ou esse endpoint
+        # específico restrito para essa conta.
+        body_lower = r.text.lower()
+        if any(marker in body_lower for marker in ("login", "checkpoint", "challenge")):
+            return False, [], "IG_COOKIE expirado, conta sinalizada, ou endpoint restrito para essa conta (Instagram devolveu página de login/checkpoint em vez de JSON)"
+        return False, [], "resposta não é JSON válido"
+
+    return True, data.get("venues", []), ""
+
+
 def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool, list[dict], str]:
     """
-    Chama o endpoint location_search do Instagram para um ponto específico.
+    Chama o(s) endpoint(s) location_search do Instagram para um ponto
+    específico, conforme GEO_GRID_ENDPOINT_MODE (mobile | web | both).
     Retorna (sucesso, venues, motivo). sucesso=False indica que o ponto não
     deve ser marcado como escaneado, para ser tentado de novo na próxima
-    rodada. motivo é uma descrição curta da falha (vazio quando sucesso).
+    rodada. motivo é uma descrição curta da última falha (vazio quando
+    sucesso).
+
+    Em "both", tenta mobile primeiro e só tenta web se mobile falhar —
+    algumas contas têm um dos dois endpoints bloqueado/restrito mesmo com
+    cookie válido, então tentar o outro dá uma segunda chance ao ponto
+    antes de desistir dele.
     """
-    try:
-        r = requests.get(
-            "https://www.instagram.com/location_search/",
-            params={"latitude": lat, "longitude": lon, "__a": 1},
-            headers={"Cookie": cookie},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return False, [], f"HTTP {r.status_code}"
+    order = ("mobile", "web") if GEO_GRID_ENDPOINT_MODE == "both" else (GEO_GRID_ENDPOINT_MODE,)
 
+    last_reason = ""
+    for name in order:
         try:
-            data = r.json()
-        except ValueError:
-            # Instagram devolveu 200 com HTML em vez de JSON — geralmente
-            # sinal de cookie expirado ou conta sinalizada (login/checkpoint).
-            body_lower = r.text.lower()
-            if any(marker in body_lower for marker in ("login", "checkpoint", "challenge")):
-                return False, [], "IG_COOKIE expirado ou conta sinalizada (Instagram devolveu página de login/checkpoint em vez de JSON)"
-            return False, [], "resposta não é JSON válido"
+            r = _LOCATION_SEARCH_FETCHERS[name](lat, lon, cookie)
+        except requests.exceptions.RequestException as e:
+            last_reason = f"[{name}] erro de rede: {e}"
+            continue
+        except Exception as e:
+            last_reason = f"[{name}] erro inesperado: {e}"
+            continue
 
-        return True, data.get("venues", []), ""
-    except requests.exceptions.RequestException as e:
-        return False, [], f"erro de rede: {e}"
-    except Exception as e:
-        return False, [], f"erro inesperado: {e}"
+        success, venues, reason = _parse_location_search_response(r)
+        if success:
+            return True, venues, ""
+        last_reason = f"[{name}] {reason}"
+
+    return False, [], last_reason
 
 
 def resolve_location_ids_geo_grid(conn=None) -> list[dict]:

@@ -125,6 +125,20 @@ IG_COOKIE = os.getenv("IG_COOKIE", "")
 # 0.5 km → ~6400 pontos (mais completo, mais lento)
 GEO_GRID_STEP_KM = float(os.getenv("GEO_GRID_STEP_KM", "1.0"))
 
+# Endpoint(s) usados na varredura geo_grid para consultar cada ponto:
+#   mobile = i.instagram.com/api/v1/location_search (API do app mobile)
+#   web    = www.instagram.com/location_search (técnica original do Bellingcat)
+#   both   = tenta mobile primeiro; só tenta web se o mobile falhar (padrão)
+# Algumas contas têm um dos dois endpoints bloqueado/restrito mesmo com
+# cookie válido — "both" dá resiliência tentando o outro antes de desistir
+# do ponto.
+GEO_GRID_ENDPOINT_MODE = os.getenv("GEO_GRID_ENDPOINT_MODE", "both").strip().lower()
+if GEO_GRID_ENDPOINT_MODE not in {"mobile", "web", "both"}:
+    raise ValueError(
+        f"GEO_GRID_ENDPOINT_MODE inválido: '{GEO_GRID_ENDPOINT_MODE}'. "
+        "Valores aceitos: mobile | web | both"
+    )
+
 # ─── Instagram ────────────────────────────────────────────────
 INSTALOADER_USERNAME    = os.getenv("INSTALOADER_USERNAME")
 INSTALOADER_SESSION_DIR = os.getenv("INSTALOADER_SESSION_DIR")
