@@ -81,12 +81,18 @@ def mark_grid_point_scanned(conn, lat: float, lon: float, step_km: float, venues
     conn.commit()
 
 
-def load_all_locations(conn) -> list[dict]:
-    """Carrega todas as locations já conhecidas no banco (cache completo)."""
+def load_uncollected_locations(conn) -> list[dict]:
+    """
+    Carrega as locations cujos posts ainda não foram coletados
+    (posts_collected_at IS NULL) — cache de progresso da coleta de posts.
+    Uma reexecução após crash/interrupção retoma só o que falta, em vez de
+    revisitar do zero as locations já processadas.
+    """
     with conn.cursor() as cur:
         cur.execute("""
             SELECT ig_location_id, name, ig_lat, ig_lon, osm_lat, osm_lon, osm_name
             FROM ig_locations
+            WHERE posts_collected_at IS NULL
         """)
         return [
             {
@@ -100,6 +106,16 @@ def load_all_locations(conn) -> list[dict]:
             }
             for row in cur.fetchall()
         ]
+
+
+def mark_location_collected(conn, location_id):
+    """Marca que os posts de uma location já foram coletados com sucesso."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ig_locations SET posts_collected_at = now() WHERE ig_location_id = %s",
+            (location_id,),
+        )
+    conn.commit()
 
 
 def insert_geolocations(conn, rows: list[dict]):

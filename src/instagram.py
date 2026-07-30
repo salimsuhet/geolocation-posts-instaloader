@@ -2,13 +2,15 @@ import logging
 import random
 import requests
 import time
-from datetime import timezone
+import uuid
+from collections import namedtuple
+from datetime import datetime, timezone
 
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
 from .config import BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH, T_MIN_POST, T_MAX_POST
-from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned
+from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned, mark_location_collected
 from .geo import all_geo_methods, GeoResult
 
 log = logging.getLogger(__name__)
@@ -365,16 +367,96 @@ def _geo_for_hashtag_post(post) -> list[GeoResult]:
     return all_geo_methods(post, ig_loc={})
 
 
+_MobileLocation = namedtuple("_MobileLocation", ["lat", "lng"])
+
+
+class _MobilePost:
+    """
+    Post minimalista construído a partir do media retornado pela API
+    mobile (i.instagram.com/api/v1/locations/{id}/sections/) — expõe só
+    os atributos usados por collect_posts/all_geo_methods (shortcode,
+    date_utc, owner_username, caption, location).
+
+    Não usamos instaloader.Post aqui: seus internals (_field/_full_metadata)
+    esperam o payload do endpoint web antigo (explore/locations/.../__a=1),
+    que parou de funcionar para essa conta — e quebram com esse payload novo.
+    """
+
+    def __init__(self, media: dict):
+        self.shortcode = media.get("code")
+        self.date_utc = datetime.fromtimestamp(media["taken_at"], tz=timezone.utc)
+        user = media.get("user") or {}
+        self.owner_username = user.get("username")
+        caption_data = media.get("caption")
+        self.caption = caption_data.get("text") if caption_data else None
+        loc = media.get("location") or {}
+        self.location = _MobileLocation(loc.get("lat"), loc.get("lng"))
+
+
+def _location_posts_mobile(session: requests.Session, location_id: str):
+    """
+    Itera os posts marcados numa location via API mobile do app
+    (i.instagram.com/api/v1/locations/{id}/sections/, tab=recent) —
+    mostra posts de qualquer usuário que marcou o local, igual à aba
+    "Posts" ao tocar numa location tag no app, não o feed do dono/página.
+
+    Substitui instaloader.Post.get_posts_by_location: o endpoint web
+    equivalente (explore/locations/.../__a=1) parou de responder com JSON
+    para essa conta (ver README). Pagina via o cursor `next_max_id` da
+    própria resposta — `next_page`/`next_media_ids` não são cursores reais
+    nesse endpoint (ficam vazios/estáticos).
+    """
+    headers = {
+        "User-Agent": "Instagram 76.0.0.15.395 Android",
+        "X-IG-App-ID": "936619743392459",
+        "Accept": "*/*",
+    }
+    session_id = str(uuid.uuid4())
+    device_uuid = str(uuid.uuid4())
+    data = {"tab": "recent", "session_id": session_id, "_uuid": device_uuid}
+
+    while True:
+        r = session.post(
+            f"https://i.instagram.com/api/v1/locations/{location_id}/sections/",
+            headers=headers, data=data, timeout=15,
+        )
+        if r.status_code == 429:
+            raise TooManyRequestsException(f"HTTP 429 em locations/{location_id}/sections/")
+        r.raise_for_status()
+        payload = r.json()
+
+        for section in payload.get("sections", []):
+            for item in section.get("layout_content", {}).get("medias", []):
+                media = item.get("media")
+                if media:
+                    yield _MobilePost(media)
+
+        next_max_id = payload.get("next_max_id")
+        if not payload.get("more_available") or not next_max_id:
+            break
+
+        data = {
+            "tab": "recent", "session_id": session_id, "_uuid": device_uuid,
+            "max_id": next_max_id,
+        }
+
+
 def collect_posts(L, conn, locations: list[dict]):
-    """Coleta posts por location ID (fonte: OSM → Instagram)."""
+    """
+    Coleta posts por location ID (fonte: OSM → Instagram).
+    Marca cada location como concluída (posts_collected_at) só quando
+    termina sem erro — uma reexecução após crash/interrupção retoma pelas
+    locations ainda pendentes, sem revisitar as já processadas.
+    """
     for ig_loc in locations:
         log.info(f"Coletando location '{ig_loc['name']}' (id={ig_loc['id']})")
 
         post_batch = []
         geo_batch  = []
+        ok = True
 
         try:
-            posts = L.get_location_posts(str(ig_loc["id"]))
+            posts = _location_posts_mobile(L.context._session, str(ig_loc["id"]))
 
             for post in posts:
                 post_date = post.date_utc
@@ -417,13 +499,18 @@ def collect_posts(L, conn, locations: list[dict]):
 
         except TooManyRequestsException:
             backoff()
+            ok = False
         except Exception as e:
             log.error(f"Erro em location {ig_loc['id']}: {e}")
+            ok = False
 
         if post_batch:
             insert_posts(conn, post_batch)
             insert_geolocations(conn, geo_batch)
             log.info(f"  → {len(post_batch)} posts / {len(geo_batch)} geos inseridos (flush final)")
+
+        if conn and ok:
+            mark_location_collected(conn, ig_loc["id"])
 
         # garante uma pausa mínima por location mesmo quando ela não tem
         # posts (senão locations vazias em sequência não pausam nada, já

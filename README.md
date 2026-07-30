@@ -363,6 +363,25 @@ no `.env` para `location` ou `both` e rodando `make collect` — a coleta usa
 todas as locations já salvas no banco (o cache completo), não só as
 descobertas na última execução da varredura.
 
+#### Qual endpoint busca os posts de cada location
+
+A coleta usa `i.instagram.com/api/v1/locations/{id}/sections/` (API do app
+mobile, `tab=recent`) para listar os posts marcados numa location — o mesmo
+comportamento de tocar numa location tag no app e ver os posts recentes de
+qualquer usuário que marcou aquele lugar (não é o feed do dono/página do
+local). O endpoint web equivalente (`explore/locations/{id}/?__a=1`, usado
+pela versão antiga do Instaloader) parou de responder com JSON para
+algumas contas — devolve a página HTML normal do site mesmo com sessão
+válida.
+
+A paginação usa o cursor `next_max_id` que a própria resposta devolve — os
+campos `next_page`/`next_media_ids` desse endpoint não são cursores reais
+(ficam vazios ou estáticos).
+
+Cada location cujos posts já foram coletados fica marcada em
+`ig_locations.posts_collected_at` — uma reexecução após crash/interrupção
+retoma só pelas locations pendentes, sem revisitar as já processadas.
+
 ### Controlar o ritmo das requisições
 
 O coletor usa dois pares independentes de `T_MIN`/`T_MAX`, um para cada
@@ -505,6 +524,7 @@ chmod +x run-queries.sh   # só na primeira vez
 | `geo_grid_locations_lista.sql`  | Todas as locations descobertas via geo_grid (com ou sem match OSM) |
 | `geo_grid_progresso.sql`       | Progresso da varredura geo_grid: pontos escaneados, locations e último ponto processado |
 | `hashtags_automaticas_lista.sql` | Hashtags geradas com contagem de posts             |
+| `limpar_posts_coletados.sql`   | ⚠️ **Destrutiva** — apaga todos os posts/geolocalizações coletados e reseta o cache de progresso da coleta |
 
 ### Exportar uma query direto para CSV
 
@@ -567,7 +587,8 @@ docker cp gv_instagram_db:/tmp/geolocations.csv .\geolocations.csv
 │   └── main.py         # entrypoint — orquestra as fases
 ├── migrations/
 │   ├── 001_initial_schema.sql
-│   └── 002_geo_grid_cache.sql   # cache de pontos já escaneados no geo_grid
+│   ├── 002_geo_grid_cache.sql             # cache de pontos já escaneados no geo_grid
+│   └── 003_locations_collected_cache.sql  # cache de progresso da coleta de posts
 ├── queries/            # queries SQL prontas para análise
 ├── session/            # sessão do Instaloader (não commitar)
 ├── logs/               # logs persistentes (gerado automaticamente)

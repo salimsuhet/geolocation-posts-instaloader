@@ -19,7 +19,7 @@ from .config import (
     INSTALOADER_USERNAME,
     LOCATION_RESOLVE_MODE,
 )
-from .db import get_conn, insert_locations, load_all_locations
+from .db import get_conn, insert_locations, load_uncollected_locations
 from .hashtags import build_hashtag_list
 from .instagram import collect_posts, collect_posts_by_hashtag, resolve_location_ids, resolve_location_ids_geo_grid
 from .osm import fetch_osm_locations
@@ -91,15 +91,18 @@ def main():
             log.info("Modo: geo_grid (grade de coordenadas via location_search)")
             new_locations = resolve_location_ids_geo_grid(conn=conn)
             insert_locations(conn, new_locations)
-            ig_locations = load_all_locations(conn)
-            log.info(f"Usando {len(ig_locations)} locations do cache (banco) para coleta de posts")
         else:
             log.info("Modo: osm_name (nome OSM → fbsearch/places)")
             osm_locations = fetch_osm_locations()
             ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
             insert_locations(conn, ig_locations)
 
-        collect_posts(L, conn, ig_locations)
+        # Carrega só as locations cujos posts ainda não foram coletados —
+        # uma reexecução após crash/interrupção retoma pelas pendentes,
+        # sem revisitar do zero as já processadas.
+        pending_locations = load_uncollected_locations(conn)
+        log.info(f"Usando {len(pending_locations)} locations pendentes (sem posts coletados ainda) para coleta de posts")
+        collect_posts(L, conn, pending_locations)
     else:
         log.info("=== Fase 1 ignorada (COLLECT_MODE=hashtag) ===")
 
