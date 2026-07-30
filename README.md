@@ -523,6 +523,7 @@ chmod +x run-queries.sh   # só na primeira vez
 | `locations_resolvidas_lista.sql` | Lista de locations resolvidas com coordenadas      |
 | `geo_grid_locations_lista.sql`  | Todas as locations descobertas via geo_grid (com ou sem match OSM) |
 | `geo_grid_progresso.sql`       | Progresso da varredura geo_grid: pontos escaneados, locations e último ponto processado |
+| `coleta_posts_progresso.sql`   | Progresso da coleta de posts: locations coletadas/pendentes, % concluído, total de posts |
 | `hashtags_automaticas_lista.sql` | Hashtags geradas com contagem de posts             |
 | `limpar_posts_coletados.sql`   | ⚠️ **Destrutiva** — apaga todos os posts/geolocalizações coletados e reseta o cache de progresso da coleta |
 
