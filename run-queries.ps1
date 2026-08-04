@@ -1,4 +1,4 @@
-# run-queries.ps1
+﻿# run-queries.ps1
 # Executa todas as queries do projeto contra o banco gv_instagram_db
 # Uso: .\run-queries.ps1
 #      .\run-queries.ps1 -Query method_coverage      # roda só uma query
@@ -30,15 +30,24 @@ if ($files.Count -eq 0) {
     exit 1
 }
 
-foreach ($file in $files) {
-    $separator = "=" * 60
-    Write-Host ""
-    Write-Host $separator -ForegroundColor Cyan
-    Write-Host "  $($file.Name)" -ForegroundColor Yellow
-    Write-Host $separator -ForegroundColor Cyan
+# O psql dentro do container escreve em UTF-8 (server_encoding do banco).
+# Sem isso, o PowerShell 5.1 decodifica a saída do processo externo usando
+# a code page padrão do console (não UTF-8), corrompendo acentos na tela.
+$previousOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    foreach ($file in $files) {
+        $separator = "=" * 60
+        Write-Host ""
+        Write-Host $separator -ForegroundColor Cyan
+        Write-Host "  $($file.Name)" -ForegroundColor Yellow
+        Write-Host $separator -ForegroundColor Cyan
 
-    docker cp $file.FullName "${Container}:/tmp/$($file.Name)" | Out-Null
-    docker exec -it $Container psql -U $User -d $Database -f "/tmp/$($file.Name)"
+        docker cp $file.FullName "${Container}:/tmp/$($file.Name)" | Out-Null
+        docker exec -it $Container psql -U $User -d $Database -f "/tmp/$($file.Name)"
+    }
+} finally {
+    [Console]::OutputEncoding = $previousOutputEncoding
 }
 
 Write-Host ""

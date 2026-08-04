@@ -1,4 +1,4 @@
-# run-export.ps1
+﻿# run-export.ps1
 # Exporta o resultado de uma query da pasta queries/ para um arquivo .csv local
 # Uso: .\run-export.ps1 -Query geo_grid_locations_lista
 #      .\run-export.ps1 -Query method_coverage -Out coverage.csv
@@ -31,6 +31,16 @@ if ($innerSql.EndsWith(";")) {
 }
 $copySql = "COPY ($innerSql) TO STDOUT WITH CSV HEADER"
 
-docker exec $Container psql -U $User -d $Database -c $copySql | Out-File -FilePath $Out -Encoding utf8
+# O psql dentro do container escreve em UTF-8 (server_encoding do banco).
+# Sem isso, o PowerShell 5.1 decodifica a saída do processo externo usando
+# a code page padrão do console (não UTF-8), corrompendo acentos antes
+# mesmo do Out-File reescrever o arquivo.
+$previousOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+try {
+    docker exec $Container psql -U $User -d $Database -c $copySql | Out-File -FilePath $Out -Encoding utf8
+} finally {
+    [Console]::OutputEncoding = $previousOutputEncoding
+}
 
 Write-Host "Exportado: $Out" -ForegroundColor Green
