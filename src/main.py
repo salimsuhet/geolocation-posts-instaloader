@@ -18,6 +18,8 @@ from .config import (
     INSTALOADER_SESSION_DIR,
     INSTALOADER_USERNAME,
     LOCATION_RESOLVE_MODE,
+    START_DATE,
+    STOP_DATE,
 )
 from .db import get_conn, insert_locations, load_uncollected_locations
 from .hashtags import build_hashtag_list
@@ -41,6 +43,8 @@ def main():
     log.info(f"Modo resolução loc.  : {LOCATION_RESOLVE_MODE}")
     log.info(f"Hashtags automáticas : {'sim' if HASHTAG_AUTO_GENERATE else 'não'}")
     log.info(f"Bounding box         : lat [{BBOX[0]}, {BBOX[2]}] lon [{BBOX[1]}, {BBOX[3]}]")
+    janela = f"a partir de {STOP_DATE.date()}" if START_DATE is None else f"[{STOP_DATE.date()}, {START_DATE.date()}]"
+    log.info(f"Período de coleta    : {janela}")
 
     conn = get_conn()
 

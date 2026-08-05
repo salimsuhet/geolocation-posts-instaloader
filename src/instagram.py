@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
-from .config import BATCH_SIZE, BBOX, STOP_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH, T_MIN_POST, T_MAX_POST
+from .config import BATCH_SIZE, BBOX, STOP_DATE, START_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH, T_MIN_POST, T_MAX_POST
 from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned, mark_location_collected
 from .geo import all_geo_methods, GeoResult
 
@@ -466,34 +466,35 @@ def collect_posts(L, conn, locations: list[dict]):
                     log.info("  → Post anterior a STOP_DATE, encerrando location")
                     break
 
-                caption = (post.caption or "")[:280].replace("\n", " ") if post.caption else None
+                if START_DATE is None or post_date <= START_DATE:
+                    caption = (post.caption or "")[:280].replace("\n", " ") if post.caption else None
 
-                post_batch.append({
-                    "post_id":         post.shortcode,
-                    "taken_at":        post.date_utc,
-                    "ig_location_id":  ig_loc["id"],
-                    "owner_username":  post.owner_username,
-                    "caption_snippet": caption,
-                })
-
-                for geo in all_geo_methods(post, ig_loc):
-                    geo_batch.append({
-                        "post_id":    post.shortcode,
-                        "method":     geo.method,
-                        "lat":        geo.lat,
-                        "lon":        geo.lon,
-                        "confidence": geo.confidence,
+                    post_batch.append({
+                        "post_id":         post.shortcode,
+                        "taken_at":        post.date_utc,
+                        "ig_location_id":  ig_loc["id"],
+                        "owner_username":  post.owner_username,
+                        "caption_snippet": caption,
                     })
 
-                available = sum(1 for g in all_geo_methods(post, ig_loc) if g.lat is not None)
-                log.debug(f"  ✓ {post.shortcode}: {available}/4 métodos com coordenada")
+                    for geo in all_geo_methods(post, ig_loc):
+                        geo_batch.append({
+                            "post_id":    post.shortcode,
+                            "method":     geo.method,
+                            "lat":        geo.lat,
+                            "lon":        geo.lon,
+                            "confidence": geo.confidence,
+                        })
 
-                if len(post_batch) >= BATCH_SIZE:
-                    insert_posts(conn, post_batch)
-                    insert_geolocations(conn, geo_batch)
-                    log.info(f"  → {len(post_batch)} posts / {len(geo_batch)} geos inseridos")
-                    post_batch = []
-                    geo_batch  = []
+                    available = sum(1 for g in all_geo_methods(post, ig_loc) if g.lat is not None)
+                    log.debug(f"  ✓ {post.shortcode}: {available}/4 métodos com coordenada")
+
+                    if len(post_batch) >= BATCH_SIZE:
+                        insert_posts(conn, post_batch)
+                        insert_geolocations(conn, geo_batch)
+                        log.info(f"  → {len(post_batch)} posts / {len(geo_batch)} geos inseridos")
+                        post_batch = []
+                        geo_batch  = []
 
                 sleep()
 
@@ -548,6 +549,9 @@ def collect_posts_by_hashtag(L, conn, hashtags: list[str]):
 
                 if not _within_bbox(post):
                     skipped += 1
+                    continue
+
+                if START_DATE is not None and post_date > START_DATE:
                     continue
 
                 caption = (post.caption or "")[:280].replace("\n", " ") if post.caption else None

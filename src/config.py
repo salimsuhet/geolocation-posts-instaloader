@@ -89,7 +89,7 @@ BASE_SLEEP_SEARCH = 60 / REQUESTS_PER_MINUTE_SEARCH   # ~10 s entre buscas
 BATCH_SIZE = 50
 
 # ─── Período de coleta ────────────────────────────────────────
-# Coleta posts até esta data (exclusive)
+# Coleta posts até esta data (exclusive) — limite inferior (mais antigo)
 # Formato no .env: STOP_DATE=2026-01-01
 def _stop_date() -> datetime:
     raw = os.getenv("STOP_DATE", "2026-01-01")
@@ -102,6 +102,32 @@ def _stop_date() -> datetime:
         )
 
 STOP_DATE = _stop_date()
+
+# Limite superior (mais recente) do período de coleta — opcional.
+# Posts mais recentes que essa data são ignorados (não inseridos no banco),
+# mas a iteração continua (o Instagram devolve do mais recente pro mais
+# antigo) até alcançar a janela [STOP_DATE, START_DATE] ou STOP_DATE.
+# Deixe em branco para não limitar (padrão: sem teto, pega até o post mais
+# recente de cada location/hashtag).
+# Formato no .env: START_DATE=2026-07-24
+def _start_date():
+    raw = os.getenv("START_DATE", "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ValueError(
+            f"START_DATE inválido: '{raw}'. "
+            "Formato esperado: YYYY-MM-DD ex: 2026-07-24"
+        )
+
+START_DATE = _start_date()
+if START_DATE is not None and START_DATE <= STOP_DATE:
+    raise ValueError(
+        f"START_DATE ({START_DATE.date()}) deve ser posterior a "
+        f"STOP_DATE ({STOP_DATE.date()})"
+    )
 
 # ─── OSM / PBF ────────────────────────────────────────────────
 _OSM_PBF_DIR  = _pathlib.Path(os.getenv("OSM_PBF_DIR", "."))

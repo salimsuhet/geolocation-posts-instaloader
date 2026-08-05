@@ -191,6 +191,8 @@ COLLECT_MODE=both
 
 # --- Período de coleta ------------------------------------------
 STOP_DATE=2026-01-01
+# Opcional: teto do período (deixe em branco para não limitar)
+START_DATE=
 
 # --- Hashtags automáticas ---------------------------------------
 HASHTAG_AUTO_GENERATE=true
@@ -439,13 +441,31 @@ sem rodar o coletor antes de tentar de novo.
 
 ## Configuração avançada
 
-### Período de coleta (`STOP_DATE`)
+### Período de coleta (`STOP_DATE` / `START_DATE`)
 
-Posts anteriores a essa data são ignorados. Padrão: `2026-01-01`.
+`STOP_DATE` é o limite inferior — posts anteriores a essa data são
+ignorados, e a coleta encerra aquela location/hashtag ao alcançá-lo (o
+Instagram devolve do mais recente pro mais antigo, então isso funciona
+como um ponto de parada). Padrão: `2026-01-01`.
 
 ```dotenv
 STOP_DATE=2025-01-01
 ```
+
+`START_DATE` é opcional e define o limite superior, formando uma janela
+`[STOP_DATE, START_DATE]`. Posts mais recentes que `START_DATE` são
+ignorados (não entram no banco), mas a coleta **continua iterando** até
+alcançar a janela — ou seja, reduz o volume salvo e o escopo das
+consultas, mas não o número de chamadas necessárias pra pular os posts
+mais recentes que a janela. Deixe em branco para não limitar (padrão).
+
+```dotenv
+STOP_DATE=2026-07-01
+START_DATE=2026-07-24
+```
+
+> `START_DATE` deve ser posterior a `STOP_DATE` — o coletor valida isso
+> na subida e recusa iniciar se a janela estiver invertida.
 
 ### Bounding box
 
