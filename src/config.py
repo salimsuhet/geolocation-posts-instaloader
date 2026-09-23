@@ -1,6 +1,9 @@
 import os
 import pathlib as _pathlib
+import re as _re
 from datetime import datetime, timezone
+from datetime import time as _time
+from zoneinfo import ZoneInfo as _ZoneInfo
 
 
 # ─── Banco de dados ───────────────────────────────────────────
@@ -152,7 +155,10 @@ if LOCATION_RESOLVE_MODE not in {"osm_name", "geo_grid"}:
         "Valores aceitos: osm_name | geo_grid"
     )
 
-# Cookie do Instagram (necessário apenas para LOCATION_RESOLVE_MODE=geo_grid)
+# Cookie do Instagram — fallback manual para LOCATION_RESOLVE_MODE=geo_grid.
+# Só é necessário se INSTALOADER_ACCOUNTS/INSTALOADER_USERNAME estiver vazio:
+# com uma conta configurada, o cookie é derivado automaticamente da sessão
+# ativa do Instaloader (ver src/accounts.py), sem precisar colar manualmente.
 # Obter em: DevTools → Network → qualquer request → Request Headers → cookie
 IG_COOKIE = os.getenv("IG_COOKIE", "")
 
@@ -178,3 +184,103 @@ if GEO_GRID_ENDPOINT_MODE not in {"mobile", "web", "both"}:
 # ─── Instagram ────────────────────────────────────────────────
 INSTALOADER_USERNAME    = os.getenv("INSTALOADER_USERNAME")
 INSTALOADER_SESSION_DIR = os.getenv("INSTALOADER_SESSION_DIR")
+
+# ─── Contas Instagram (rotação) ────────────────────────────────
+# Lista de usernames para rotacionar entre si durante a coleta (1 a 10
+# contas). Cada uma precisa ter sessão salva previamente via
+# `scripts/login_accounts.py` em INSTALOADER_SESSION_DIR (arquivo
+# session-<username> — mesmo formato que o Instaloader já usa).
+# Se vazia, cai no INSTALOADER_USERNAME único (compatibilidade).
+def _accounts() -> list[str]:
+    raw = os.getenv("INSTALOADER_ACCOUNTS", "").strip()
+    if raw:
+        accounts = [u.strip() for u in raw.split(",") if u.strip()]
+    elif INSTALOADER_USERNAME:
+        accounts = [INSTALOADER_USERNAME]
+    else:
+        accounts = []
+    if len(accounts) > 10:
+        raise ValueError(
+            f"INSTALOADER_ACCOUNTS tem {len(accounts)} contas — máximo suportado é 10."
+        )
+    return accounts
+
+INSTALOADER_ACCOUNTS = _accounts()
+
+# Duração (horas) que cada conta fica ativa antes de rotacionar para a
+# próxima — sorteada uniformemente entre MIN e MAX a cada troca.
+ACCOUNT_ROTATE_MIN_HOURS = float(os.getenv("ACCOUNT_ROTATE_MIN_HOURS", "1"))
+ACCOUNT_ROTATE_MAX_HOURS = float(os.getenv("ACCOUNT_ROTATE_MAX_HOURS", "6"))
+if ACCOUNT_ROTATE_MIN_HOURS > ACCOUNT_ROTATE_MAX_HOURS:
+    raise ValueError(
+        f"ACCOUNT_ROTATE_MIN_HOURS ({ACCOUNT_ROTATE_MIN_HOURS}) não pode ser maior que "
+        f"ACCOUNT_ROTATE_MAX_HOURS ({ACCOUNT_ROTATE_MAX_HOURS})"
+    )
+
+# ─── Janela de horário de coleta ───────────────────────────────
+# Restringe a coleta a um intervalo de horário (e dias da semana), para
+# que o tráfego se misture ao uso normal da rede de onde o coletor roda
+# (ex: horário comercial de uma instituição). Fora da janela, o coletor
+# pausa e retoma sozinho quando ela reabrir — não encerra o processo.
+# Deixe COLLECT_WINDOW_START/END em branco para não restringir horário.
+def _parse_hhmm(raw: str, label: str) -> _time | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    if not _re.fullmatch(r"\d{2}:\d{2}", raw):
+        raise ValueError(f"{label} inválido: '{raw}'. Formato esperado: HH:MM ex: 08:00")
+    h, m = (int(x) for x in raw.split(":"))
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"{label} inválido: '{raw}'. Formato esperado: HH:MM ex: 08:00")
+    return _time(h, m)
+
+COLLECT_WINDOW_START = _parse_hhmm(os.getenv("COLLECT_WINDOW_START", "08:00"), "COLLECT_WINDOW_START")
+COLLECT_WINDOW_END   = _parse_hhmm(os.getenv("COLLECT_WINDOW_END", "19:00"), "COLLECT_WINDOW_END")
+if (COLLECT_WINDOW_START is None) != (COLLECT_WINDOW_END is None):
+    raise ValueError(
+        "COLLECT_WINDOW_START e COLLECT_WINDOW_END devem ser definidos juntos "
+        "(ou ambos vazios para não restringir horário)."
+    )
+
+# Dias da semana em que a janela vale: "mon-fri" (padrão), "all", ou lista
+# separada por vírgula (ex: "mon,wed,fri"). Abreviações em inglês (3 letras).
+_WEEKDAY_NAMES = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAY_LABELS = {v: k for k, v in _WEEKDAY_NAMES.items()}
+
+def _parse_window_days(raw: str) -> set[int]:
+    raw = raw.strip().lower()
+    if not raw or raw == "all":
+        return set(range(7))
+    if "-" in raw and "," not in raw:
+        start_s, end_s = (p.strip() for p in raw.split("-", 1))
+        if start_s not in _WEEKDAY_NAMES or end_s not in _WEEKDAY_NAMES:
+            raise ValueError(
+                f"COLLECT_WINDOW_DAYS inválido: '{raw}'. "
+                "Use mon-fri, all, ou lista tipo mon,wed,fri"
+            )
+        start, end = _WEEKDAY_NAMES[start_s], _WEEKDAY_NAMES[end_s]
+        if start <= end:
+            return set(range(start, end + 1))
+        return set(range(start, 7)) | set(range(0, end + 1))
+    days = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part not in _WEEKDAY_NAMES:
+            raise ValueError(
+                f"COLLECT_WINDOW_DAYS inválido: '{raw}'. "
+                "Use mon-fri, all, ou lista tipo mon,wed,fri"
+            )
+        days.add(_WEEKDAY_NAMES[part])
+    return days
+
+COLLECT_WINDOW_DAYS = _parse_window_days(os.getenv("COLLECT_WINDOW_DAYS", "mon-fri"))
+
+# Timezone usada para avaliar a janela — explícita e independente do
+# relógio/timezone do sistema operacional onde o processo roda (container
+# costuma rodar em UTC). Requer o pacote `tzdata` no requirements.txt para
+# funcionar em qualquer ambiente, inclusive Windows.
+COLLECT_WINDOW_TZ = os.getenv("COLLECT_WINDOW_TZ", "America/Sao_Paulo").strip()
+try:
+    _ZoneInfo(COLLECT_WINDOW_TZ)
+except Exception as e:
+    raise ValueError(f"COLLECT_WINDOW_TZ inválido: '{COLLECT_WINDOW_TZ}' ({e})")

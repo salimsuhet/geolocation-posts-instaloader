@@ -11,12 +11,16 @@ import os
 
 import instaloader
 
+from .accounts import AccountRotator, wait_for_window
 from .config import (
     BBOX,
     COLLECT_MODE,
+    COLLECT_WINDOW_DAYS,
+    COLLECT_WINDOW_END,
+    COLLECT_WINDOW_START,
+    COLLECT_WINDOW_TZ,
     HASHTAG_AUTO_GENERATE,
-    INSTALOADER_SESSION_DIR,
-    INSTALOADER_USERNAME,
+    INSTALOADER_ACCOUNTS,
     LOCATION_RESOLVE_MODE,
     START_DATE,
     STOP_DATE,
@@ -38,6 +42,9 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+_WEEKDAY_LABELS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
 def main():
     log.info(f"Modo de coleta       : {COLLECT_MODE}")
     log.info(f"Modo resolução loc.  : {LOCATION_RESOLVE_MODE}")
@@ -45,6 +52,15 @@ def main():
     log.info(f"Bounding box         : lat [{BBOX[0]}, {BBOX[2]}] lon [{BBOX[1]}, {BBOX[3]}]")
     janela = f"a partir de {STOP_DATE.date()}" if START_DATE is None else f"[{STOP_DATE.date()}, {START_DATE.date()}]"
     log.info(f"Período de coleta    : {janela}")
+    log.info(f"Contas configuradas  : {len(INSTALOADER_ACCOUNTS)} ({', '.join(INSTALOADER_ACCOUNTS) or '-'})")
+    if COLLECT_WINDOW_START is not None:
+        dias = ",".join(_WEEKDAY_LABELS[d] for d in sorted(COLLECT_WINDOW_DAYS))
+        log.info(
+            f"Janela de coleta     : {COLLECT_WINDOW_START:%H:%M}-{COLLECT_WINDOW_END:%H:%M} "
+            f"({COLLECT_WINDOW_TZ}), dias={dias}"
+        )
+    else:
+        log.info("Janela de coleta     : sem restrição de horário")
 
     conn = get_conn()
 
@@ -56,19 +72,18 @@ def main():
         request_timeout=30,
     )
 
-    if INSTALOADER_USERNAME:
-        session_file = (
-            os.path.join(INSTALOADER_SESSION_DIR, f"session-{INSTALOADER_USERNAME}")
-            if INSTALOADER_SESSION_DIR else None
+    rotator = None
+    if INSTALOADER_ACCOUNTS:
+        rotator = AccountRotator(INSTALOADER_ACCOUNTS)
+        if not rotator.ensure_active(L):
+            rotator = None
+    else:
+        log.warning(
+            "Nenhuma conta configurada (INSTALOADER_ACCOUNTS/INSTALOADER_USERNAME) — "
+            "continuando sem login (rate limit mais agressivo)."
         )
-        try:
-            L.load_session_from_file(INSTALOADER_USERNAME, filename=session_file)
-            log.info(f"Sessão carregada para @{INSTALOADER_USERNAME}")
-        except FileNotFoundError:
-            log.warning(
-                f"Sessão não encontrada para @{INSTALOADER_USERNAME} — "
-                "continuando sem login (rate limit mais agressivo)."
-            )
+
+    wait_for_window()
 
     # ── Fase 0: varredura geo_grid isolada (sem coleta de posts) ──
     if COLLECT_MODE == "geo_grid_scan":
@@ -77,7 +92,7 @@ def main():
             raise ValueError(
                 "COLLECT_MODE=geo_grid_scan requer LOCATION_RESOLVE_MODE=geo_grid"
             )
-        new_locations = resolve_location_ids_geo_grid(conn=conn)
+        new_locations = resolve_location_ids_geo_grid(L, conn=conn, rotator=rotator)
         insert_locations(conn, new_locations)
         log.info(
             f"Varredura concluída — {len(new_locations)} locations novas. "
@@ -93,12 +108,12 @@ def main():
 
         if LOCATION_RESOLVE_MODE == "geo_grid":
             log.info("Modo: geo_grid (grade de coordenadas via location_search)")
-            new_locations = resolve_location_ids_geo_grid(conn=conn)
+            new_locations = resolve_location_ids_geo_grid(L, conn=conn, rotator=rotator)
             insert_locations(conn, new_locations)
         else:
             log.info("Modo: osm_name (nome OSM → fbsearch/places)")
             osm_locations = fetch_osm_locations()
-            ig_locations  = resolve_location_ids(L, osm_locations, conn=conn)
+            ig_locations  = resolve_location_ids(L, osm_locations, conn=conn, rotator=rotator)
             insert_locations(conn, ig_locations)
 
         # Carrega só as locations cujos posts ainda não foram coletados —
@@ -106,7 +121,7 @@ def main():
         # sem revisitar do zero as já processadas.
         pending_locations = load_uncollected_locations(conn)
         log.info(f"Usando {len(pending_locations)} locations pendentes (sem posts coletados ainda) para coleta de posts")
-        collect_posts(L, conn, pending_locations)
+        collect_posts(L, conn, pending_locations, rotator=rotator)
     else:
         log.info("=== Fase 1 ignorada (COLLECT_MODE=hashtag) ===")
 
@@ -122,7 +137,7 @@ def main():
         hashtags = build_hashtag_list(
             osm_locations if HASHTAG_AUTO_GENERATE else []
         )
-        collect_posts_by_hashtag(L, conn, hashtags)
+        collect_posts_by_hashtag(L, conn, hashtags, rotator=rotator)
     else:
         log.info("=== Fase 2 ignorada (COLLECT_MODE=location) ===")
 

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import instaloader
 from instaloader.exceptions import TooManyRequestsException
 
+from .accounts import wait_for_window
 from .config import BATCH_SIZE, BBOX, STOP_DATE, START_DATE, IG_COOKIE, GEO_GRID_STEP_KM, GEO_GRID_ENDPOINT_MODE, T_MIN_SEARCH, T_MAX_SEARCH, T_MIN_POST, T_MAX_POST
 from .db import insert_geolocations, insert_posts, load_scanned_grid_points, mark_grid_point_scanned, mark_location_collected
 from .geo import all_geo_methods, GeoResult
@@ -69,7 +70,7 @@ def _load_cached_locations(conn) -> dict[str, dict]:
         }
 
 
-def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
+def resolve_location_ids(L, osm_locations: list[dict], conn=None, rotator=None) -> list[dict]:
     """
     Para cada POI OSM, busca a IG location correspondente via fbsearch/places.
     Usa cache do banco para não repetir buscas já realizadas.
@@ -90,9 +91,13 @@ def resolve_location_ids(L, osm_locations: list[dict], conn=None) -> list[dict]:
     log.info(f"{len(to_resolve)} locations novas para resolver ({len(cached)} já em cache)")
 
     total = len(to_resolve)
-    sess = L.context._session  # sessão interna do instaloader com todos os headers corretos
 
     for i, loc in enumerate(to_resolve, start=1):
+        if rotator:
+            rotator.maybe_rotate(L)
+        wait_for_window()
+        sess = L.context._session  # sessão interna do instaloader com todos os headers corretos — buscada a cada item pois rotação troca o objeto
+
         if i == 1 or i % 50 == 0 or i == total:
             log.info(f"Resolvendo location IDs: {i}/{total} ({100*i//total}%)")
         try:
@@ -267,20 +272,28 @@ def _fetch_locations_at_point(lat: float, lon: float, cookie: str) -> tuple[bool
     return False, [], last_reason
 
 
-def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
+def resolve_location_ids_geo_grid(L, conn=None, rotator=None) -> list[dict]:
     """
     Descobre locations do Instagram varrendo uma grade de coordenadas sobre
     o bounding box configurado — abordagem do Bellingcat instagram-location-search.
 
-    Não depende do OSM nem de busca por nome. Requer IG_COOKIE no .env.
-    Usa cache do banco: pontos já cobertos não são repetidos.
+    Não depende do OSM nem de busca por nome. Usa cache do banco: pontos já
+    cobertos não são repetidos.
+
+    O cookie usado em cada requisição vem da sessão ativa do `rotator`
+    (INSTALOADER_ACCOUNTS/INSTALOADER_USERNAME); IG_COOKIE só é usado como
+    fallback manual quando não há nenhuma conta configurada/disponível.
     """
-    if not IG_COOKIE:
+    if rotator:
+        rotator.ensure_active(L)
+    if not (rotator and rotator.active) and not IG_COOKIE:
         raise ValueError(
-            "IG_COOKIE não definido no .env. "
-            "Necessário para LOCATION_RESOLVE_MODE=geo_grid. "
-            "Obtenha em: DevTools → Network → qualquer request do Instagram "
-            "→ Request Headers → cookie"
+            "Nenhuma conta do Instaloader disponível (INSTALOADER_ACCOUNTS/"
+            "INSTALOADER_USERNAME) e IG_COOKIE não definido no .env. "
+            "Necessário para LOCATION_RESOLVE_MODE=geo_grid — rode "
+            "scripts/login_accounts.py ou defina IG_COOKIE manualmente "
+            "(DevTools → Network → qualquer request do Instagram → "
+            "Request Headers → cookie)"
         )
 
     # Carrega IDs já conhecidos para deduplicar
@@ -313,10 +326,15 @@ def resolve_location_ids_geo_grid(conn=None) -> list[dict]:
     pending_total = len(pending)
 
     for i, (lat, lon) in enumerate(pending, start=1):
+        if rotator:
+            rotator.maybe_rotate(L)
+        wait_for_window()
+        cookie = rotator.current_cookie_header(L) if (rotator and rotator.active) else IG_COOKIE
+
         if i == 1 or i % 100 == 0 or i == pending_total:
             log.info(f"geo_grid: {i}/{pending_total} pontos pendentes | {new_count} locations novas")
 
-        success, venues, fail_reason = _fetch_locations_at_point(lat, lon, IG_COOKIE)
+        success, venues, fail_reason = _fetch_locations_at_point(lat, lon, cookie)
 
         for v in venues:
             ext_id = str(v.get("external_id", ""))
@@ -441,7 +459,7 @@ def _location_posts_mobile(session: requests.Session, location_id: str):
         }
 
 
-def collect_posts(L, conn, locations: list[dict]):
+def collect_posts(L, conn, locations: list[dict], rotator=None):
     """
     Coleta posts por location ID (fonte: OSM → Instagram).
     Marca cada location como concluída (posts_collected_at) só quando
@@ -449,6 +467,10 @@ def collect_posts(L, conn, locations: list[dict]):
     locations ainda pendentes, sem revisitar as já processadas.
     """
     for ig_loc in locations:
+        if rotator:
+            rotator.maybe_rotate(L)
+        wait_for_window()
+
         log.info(f"Coletando location '{ig_loc['name']}' (id={ig_loc['id']})")
 
         post_batch = []
@@ -519,7 +541,7 @@ def collect_posts(L, conn, locations: list[dict]):
         sleep()
 
 
-def collect_posts_by_hashtag(L, conn, hashtags: list[str]):
+def collect_posts_by_hashtag(L, conn, hashtags: list[str], rotator=None):
     """
     Coleta posts por hashtag. Posts sem location ficam com ig_location_id=NULL
     e recebem apenas os métodos geo disponíveis (post_latlon e bbox_centroid).
@@ -529,6 +551,10 @@ def collect_posts_by_hashtag(L, conn, hashtags: list[str]):
     empty_loc = {"ig_lat": None, "ig_lon": None, "osm_lat": None, "osm_lon": None}
 
     for tag in hashtags:
+        if rotator:
+            rotator.maybe_rotate(L)
+        wait_for_window()
+
         log.info(f"Coletando hashtag #{tag}")
 
         post_batch = []

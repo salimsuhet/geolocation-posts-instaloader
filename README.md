@@ -45,11 +45,17 @@ Salve na raiz do projeto. O coletor vai gerar automaticamente um
 
 ---
 
-## 2. Gerar a sessão do Instaloader (uma vez)
+## 2. Preparar as sessões do Instaloader (uma ou várias contas)
 
 A sessão autentica o coletor no Instagram e evita rate limit agressivo.
+O coletor suporta rotacionar entre **1 e 10 contas** durante a coleta —
+cada uma fica ativa por uma janela sorteada (`ACCOUNT_ROTATE_MIN_HOURS` a
+`ACCOUNT_ROTATE_MAX_HOURS`) antes de passar pra próxima, sem repetir a
+mesma conta duas vezes seguidas e sem trocar no meio de uma location/
+hashtag/ponto da grade em andamento. Se você só tem uma conta, o mesmo
+mecanismo funciona normalmente com `INSTALOADER_USERNAME`.
 
-### Por que criar no Windows e não no container?
+### Por que preparar no Windows e não no container?
 
 O Instagram vincula a sessão ao user-agent do ambiente onde ela foi criada.
 Se você criar a sessão dentro do container (Linux) e o Instagram bloquear
@@ -65,42 +71,44 @@ confiável.
 pip install instaloader
 ```
 
-**2. Crie a pasta de sessão** na raiz do projeto:
-
-```powershell
-mkdir session
-```
-
-**3. Faça login e salve a sessão** na pasta criada:
-
-```powershell
-python -m instaloader --login SEU_USUARIO --sessionfile .\session\session-SEU_USUARIO
-```
-
-O comando vai pedir:
-- **Senha** do Instagram
-- **Código 2FA** (se ativado na conta) — abra o app autenticador e cole o código
-
-Exemplo com usuário real:
-```powershell
-python -m instaloader --login salimsuhet --sessionfile .\session\session-salimsuhet
-```
-
-Saída esperada:
-```
-Logged in as salimsuhet.
-Saved session to .\session\session-salimsuhet.
-```
-
-**4. Configure o caminho no `.env`** (use o caminho absoluto):
+**2. Configure as contas no `.env`** (use o caminho absoluto para a sessão):
 
 ```dotenv
+# uma conta:
 INSTALOADER_USERNAME=salimsuhet
+
+# ou várias, para rotação (deixe INSTALOADER_USERNAME em branco):
+INSTALOADER_ACCOUNTS=salimsuhet,contasecundaria,contaterciaria
+
 INSTALOADER_SESSION_PATH=C:\Users\SeuUsuario\Documents\GitHub\seu-projeto\session
 ```
 
-> ⚠️ Use sempre o **caminho absoluto** — o Docker Desktop no Windows não
-> resolve caminhos relativos (`.\session`) em volumes corretamente.
+> ⚠️ Use sempre o **caminho absoluto** em `INSTALOADER_SESSION_PATH` — o
+> Docker Desktop no Windows não resolve caminhos relativos (`.\session`)
+> em volumes corretamente.
+
+**3. Rode o script de preparo de sessões**, que pede login interativo só
+das contas que ainda não têm sessão válida (as demais são puladas
+automaticamente):
+
+```powershell
+python scripts\login_accounts.py
+```
+
+O script vai pedir, para cada conta pendente:
+- **Senha** do Instagram
+- **Código 2FA** (se ativado na conta) — abra o app autenticador e cole o código
+
+Se o Instagram exigir uma verificação de segurança (checkpoint/challenge)
+no primeiro login de uma conta nova, o script avisa e você precisa aprovar
+manualmente pelo app/e-mail dessa conta antes de rodar o script de novo —
+isso não dá pra automatizar.
+
+**O coletor nunca pede login sozinho** — ele só usa sessões já preparadas
+por esse script, pra poder rodar desacompanhado por longos períodos. Se
+uma sessão expirar durante a coleta, o coletor apenas pula aquela conta da
+rotação e registra um aviso no log; rode `scripts\login_accounts.py` de
+novo para reativá-la.
 
 **A sessão expira periodicamente.** Repita o passo 3 se o coletor emitir:
 ```
@@ -110,12 +118,14 @@ feedback_required / spam: true
 
 ---
 
-## 3. Obter o Cookie do Instagram (para `geo_grid`)
-
-Necessário apenas se `LOCATION_RESOLVE_MODE=geo_grid`.
+## 3. Obter o Cookie do Instagram (para `geo_grid`) — só sem contas configuradas
 
 O modo `geo_grid` usa o endpoint `location_search` do Instagram diretamente,
-que requer o cookie completo do browser (não a sessão do Instaloader).
+que requer um cookie de sessão. **Se você já configurou
+`INSTALOADER_ACCOUNTS`/`INSTALOADER_USERNAME` (passo 2), pode pular esta
+seção** — o cookie é derivado automaticamente da sessão ativa no momento,
+sem precisar colar nada manualmente. `IG_COOKIE` só é usado como fallback
+manual quando nenhuma conta está configurada.
 
 ### Passo a passo
 
@@ -161,8 +171,19 @@ Edite o `.env` com os seus valores:
 ```dotenv
 # --- Instagram --------------------------------------------------
 INSTALOADER_USERNAME=seu_usuario
+# Ou, para rotacionar entre várias contas (deixe INSTALOADER_USERNAME em branco):
+# INSTALOADER_ACCOUNTS=usuario1,usuario2,usuario3
+ACCOUNT_ROTATE_MIN_HOURS=1
+ACCOUNT_ROTATE_MAX_HOURS=6
 # Caminho ABSOLUTO da pasta session/ do projeto
 INSTALOADER_SESSION_PATH=C:\Users\SeuUsuario\Documents\GitHub\seu-projeto\session
+
+# --- Janela de horário de coleta ---------------------------------
+# Deixe START/END em branco para não restringir horário
+COLLECT_WINDOW_START=08:00
+COLLECT_WINDOW_END=19:00
+COLLECT_WINDOW_DAYS=mon-fri
+COLLECT_WINDOW_TZ=America/Sao_Paulo
 
 # --- OpenStreetMap (.pbf) ---------------------------------------
 OSM_PBF_DIR=.
@@ -441,6 +462,46 @@ sem rodar o coletor antes de tentar de novo.
 
 ## Configuração avançada
 
+### Rotação de contas e janela de horário
+
+Duas configurações complementares para reduzir a chance de bloqueio quando
+a coleta roda por longos períodos:
+
+**Rotação entre contas** (`INSTALOADER_ACCOUNTS`, `ACCOUNT_ROTATE_MIN_HOURS`,
+`ACCOUNT_ROTATE_MAX_HOURS`) — em vez de uma única conta fazendo todas as
+requisições, o coletor alterna entre até 10 contas, cada uma ativa por uma
+duração sorteada (padrão: 1 a 6 horas) antes de passar para a próxima. A
+troca só acontece entre unidades de trabalho (location, hashtag ou ponto da
+grade geo_grid) — nunca no meio de uma, mesmo que isso deixe a janela real
+um pouco maior que a sorteada. Contas sem sessão válida são puladas da
+rotação (ver seção 2) sem interromper a coleta.
+
+**Janela de horário** (`COLLECT_WINDOW_START`/`END`/`DAYS`/`TZ`) — restringe
+quando o coletor faz requisições ao Instagram, útil para misturar o
+tráfego da coleta com o uso normal da rede de onde ela roda (ex: horário
+comercial de uma instituição). Fora da janela ou dos dias configurados, o
+coletor pausa e retoma sozinho quando ela reabrir — não encerra o processo,
+então pode ficar rodando como um serviço de longa duração
+(`docker-compose up -d collector`, por exemplo).
+
+```dotenv
+COLLECT_WINDOW_START=08:00
+COLLECT_WINDOW_END=19:00
+COLLECT_WINDOW_DAYS=mon-fri   # ou: all | mon,wed,fri
+COLLECT_WINDOW_TZ=America/Sao_Paulo
+```
+
+Deixe `COLLECT_WINDOW_START`/`COLLECT_WINDOW_END` em branco para não
+restringir horário nenhum.
+
+> A janela é avaliada com uma timezone explícita (`COLLECT_WINDOW_TZ`), não
+> com o relógio do sistema operacional — o container roda em UTC por
+> padrão, então comparar contra a hora "local" do container daria um
+> resultado errado (deslocado pelo fuso). Isso funciona em qualquer
+> ambiente (container Linux ou host Windows) sem precisar configurar
+> timezone do sistema; o pacote `tzdata` no `requirements.txt` garante a
+> base de dados IANA de timezones em qualquer plataforma.
+
 ### Período de coleta (`STOP_DATE` / `START_DATE`)
 
 `STOP_DATE` é o limite inferior — posts anteriores a essa data são
@@ -600,18 +661,21 @@ docker cp gv_instagram_db:/tmp/geolocations.csv .\geolocations.csv
 .
 ├── src/
 │   ├── config.py       # variáveis de ambiente (BBOX, COLLECT_MODE, LOCATION_RESOLVE_MODE)
+│   ├── accounts.py     # rotação entre contas e janela de horário de coleta
 │   ├── db.py           # conexão e inserts no PostgreSQL
 │   ├── geo.py          # GeoResult e os 4 métodos de geolocalização
 │   ├── hashtags.py     # carrega lista fixa e gera hashtags dos POIs
 │   ├── osm.py          # leitura do .pbf local (fallback: Overpass API)
 │   ├── instagram.py    # coleta por location e hashtag; resolve location IDs
 │   └── main.py         # entrypoint — orquestra as fases
+├── scripts/
+│   └── login_accounts.py  # prepara sessões das contas (login interativo, roda no host)
 ├── migrations/
 │   ├── 001_initial_schema.sql
 │   ├── 002_geo_grid_cache.sql             # cache de pontos já escaneados no geo_grid
 │   └── 003_locations_collected_cache.sql  # cache de progresso da coleta de posts
 ├── queries/            # queries SQL prontas para análise
-├── session/            # sessão do Instaloader (não commitar)
+├── session/            # sessões do Instaloader, uma por conta (não commitar)
 ├── logs/               # logs persistentes (gerado automaticamente)
 ├── hashtags.txt        ← edite para ajustar as hashtags fixas
 ├── run-queries.ps1     ← executa queries no Windows
