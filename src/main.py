@@ -8,6 +8,8 @@ Variáveis de controle (.env):
 
 import logging
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import instaloader
 
@@ -31,6 +33,12 @@ from .instagram import collect_posts, collect_posts_by_hashtag, resolve_location
 from .osm import fetch_osm_locations
 
 os.makedirs("logs", exist_ok=True)
+# Timestamps do log na mesma timezone da janela de coleta, não na do
+# container (UTC por padrão).
+_LOG_TZ = ZoneInfo(COLLECT_WINDOW_TZ)
+logging.Formatter.converter = staticmethod(
+    lambda ts: datetime.fromtimestamp(ts, _LOG_TZ).timetuple()
+)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
