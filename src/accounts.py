@@ -62,7 +62,7 @@ class AccountRotator:
 
     def _schedule_next_rotation(self) -> None:
         hours = random.uniform(ACCOUNT_ROTATE_MIN_HOURS, ACCOUNT_ROTATE_MAX_HOURS)
-        self._rotate_at = datetime.now() + timedelta(hours=hours)
+        self._rotate_at = datetime.now(_TZ) + timedelta(hours=hours)
         log.info(
             f"Próxima rotação de conta em ~{hours:.1f}h "
             f"(por volta de {self._rotate_at:%Y-%m-%d %H:%M})"
@@ -120,7 +120,7 @@ class AccountRotator:
         if self._rotate_at is None:
             self.ensure_active(L)
             return
-        if datetime.now() < self._rotate_at:
+        if datetime.now(_TZ) < self._rotate_at:
             return
 
         for _ in range(len(self._all)):
