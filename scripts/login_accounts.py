@@ -17,6 +17,7 @@ Uso:
 import getpass
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ import instaloader
 from instaloader.exceptions import (
     BadCredentialsException,
     ConnectionException,
+    LoginException,
     TwoFactorAuthRequiredException,
 )
 
@@ -93,16 +95,24 @@ def _interactive_login(username: str, session_dir: Path) -> bool:
     except BadCredentialsException as e:
         log.error(f"@{username}: credenciais inválidas ({e})")
         return False
-    except ConnectionException as e:
-        msg = str(e).lower()
-        if "checkpoint" in msg or "challenge" in msg:
+    except (ConnectionException, LoginException) as e:
+        msg = str(e)
+        if "checkpoint" in msg.lower() or "challenge" in msg.lower():
+            # o Instaloader devolve o checkpoint_url cru da API, que costuma vir
+            # como caminho relativo (ex: /auth_platform/?apc=...) — sem o domínio
+            # não é um link válido pra colar no navegador.
+            path_match = re.search(r"to (\S+) -", msg)
+            path = path_match.group(1) if path_match else None
+            url = f"https://www.instagram.com{path}" if path and path.startswith("/") else path
             log.error(
                 f"@{username}: Instagram exigiu verificação de segurança "
-                "(checkpoint/challenge) — abra o app ou e-mail dessa conta, aprove "
-                "o login manualmente, e rode este script de novo."
+                "(checkpoint) antes de permitir o login. Abra o link abaixo num "
+                "navegador (de preferência já logado nessa conta), siga as "
+                "instruções, e rode este script de novo"
+                + (f":\n{url}" if url else f": {msg}")
             )
         else:
-            log.error(f"@{username}: erro de conexão durante login ({e})")
+            log.error(f"@{username}: erro durante login ({e})")
         return False
 
     session_dir.mkdir(parents=True, exist_ok=True)
