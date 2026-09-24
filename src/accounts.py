@@ -87,7 +87,18 @@ class AccountRotator:
             self._unavailable.add(username)
             return False
 
-        if not L.test_login():
+        try:
+            logged_in = L.test_login()
+        except Exception as e:
+            # ex: 400 "checkpoint_required" — Instagram pediu verificação da conta
+            log.warning(
+                f"Sessão de @{username} bloqueada pelo Instagram ({e}) — pulando da rotação "
+                "(faça a verificação no app/navegador e rode scripts/login_accounts.py)"
+            )
+            self._unavailable.add(username)
+            return False
+
+        if not logged_in:
             log.warning(
                 f"Sessão de @{username} inválida/expirada — pulando da rotação "
                 "(rode scripts/login_accounts.py)"
